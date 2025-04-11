@@ -1,29 +1,64 @@
+
+
 import streamlit as st
 import requests
+import os
+import base64
 
-st.set_page_config(page_title="Map Analyzer", layout="centered")
-st.title("🗺️ Upload Map for Analysis")
+# Title
+st.title("🧠 Map Analyzer with AI")
 
-API_URL = "https://lab123.tail7bcbe3.ts.net/"  # or public API if deployed
-API_KEY = st.secrets["api_key"]
+# File uploader
+uploaded_file = st.file_uploader("Upload a map image (PNG only)", type=["png"])
 
-uploaded_file = st.file_uploader("Upload your map file", type=["tif", "zip"])
+# Prompt input
+user_prompt = st.text_area("Enter your analysis prompt")
 
+# Show image
 if uploaded_file:
-    st.success(f"Uploaded {uploaded_file.name}")
+    st.image(uploaded_file, caption="Uploaded Map", use_column_width=True)
 
-    files = {
-        "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
-    }
-    headers = {
-        "Authorization": f"Bearer {API_KEY}"
-    }
+# Analyze button
+if uploaded_file and user_prompt:
+    if st.button("Analyze"):
 
-    with st.spinner("Analyzing..."):
-        response = requests.post(API_URL, headers=headers, files=files)
+        # Convert image to base64
+        image_bytes = uploaded_file.read()
+        encoded_image = base64.b64encode(image_bytes).decode("utf-8")
 
-    if response.status_code == 200:
-        st.success("✅ Analysis complete!")
-        st.json(response.json())
-    else:
-        st.error(f"Error {response.status_code}: {response.text}")
+        # Prepare API call
+        api_key = os.getenv("WEBUI_API_KEY")
+        if not api_key:
+            st.error("API key is missing. Please set it in Streamlit Secrets.")
+        else:
+            url = "https://lab123.tail7bcbe3.ts.net/api/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+
+            # Prompt with image and user message
+            payload = {
+                "model": "deepseek-r1:1.5b",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": f"{user_prompt}\n\n[Image attached below]",
+                    }
+                ],
+                "image": {
+                    "name": "map.png",
+                    "type": "image/png",
+                    "base64": encoded_image
+                }
+            }
+
+            try:
+                response = requests.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                result = response.json()['choices'][0]['message']['content']
+                st.subheader("📝 AI Analysis Result")
+                st.markdown(result)
+
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
