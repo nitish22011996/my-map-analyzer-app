@@ -1,85 +1,104 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 
-# Load the dataset (replace with your actual file)
-@st.cache_data
-def load_data():
-    return pd.read_csv("lake_health_data.csv")
+# Function to calculate lake health score (your logic reused)
+def calculate_lake_health_score(df,
+                                vegetation_weight=1/6, barren_weight=1/6, urban_weight=1/6,
+                                precipitation_weight=1/6, evaporation_weight=1/6, air_temperature_weight=1/6):
+    required_columns = ['Lake', 'Year', 'Vegetation Area', 'Barren Area', 'Urban Area',
+                        'Precipitation', 'Evaporation', 'Air Temperature']
+    for col in required_columns:
+        if col not in df.columns:
+            raise ValueError(f"Missing column: {col}")
 
-# Function to calculate health score
-def calculate_health_score(lake, weights):
-    score = (
-        weights['vegetation'] * lake['Vegetation Area Normalized'] +
-        weights['barren'] * lake['Barren Area Normalized'] +
-        weights['urban'] * lake['Urban Area Normalized'] +
-        weights['precipitation'] * lake['Precipitation Normalized'] +
-        weights['evaporation'] * lake['Evaporation Normalized'] +
-        weights['temperature'] * lake['Air Temperature Normalized'] +
-        weights['vegetation'] * lake['Vegetation Area Trend Normalized'] +
-        weights['barren'] * lake['Barren Area Trend Normalized'] +
-        weights['urban'] * lake['Urban Area Trend Normalized'] +
-        weights['precipitation'] * lake['Precipitation Trend Normalized'] +
-        weights['evaporation'] * lake['Evaporation Trend Normalized'] +
-        weights['temperature'] * lake['Air Temperature Trend Normalized']
+    for col in ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    latest_year_data = df[df['Year'] == df['Year'].max()].copy()
+    if latest_year_data.empty:
+        return pd.DataFrame()
+
+    # Normalize latest year data
+    latest_year_data['Vegetation Area Normalized'] = (latest_year_data['Vegetation Area'] - latest_year_data['Vegetation Area'].min()) / (latest_year_data['Vegetation Area'].max() - latest_year_data['Vegetation Area'].min())
+    latest_year_data['Barren Area Normalized'] = 1 - (latest_year_data['Barren Area'] - latest_year_data['Barren Area'].min()) / (latest_year_data['Barren Area'].max() - latest_year_data['Barren Area'].min())
+    latest_year_data['Urban Area Normalized'] = 1 - (latest_year_data['Urban Area'] - latest_year_data['Urban Area'].min()) / (latest_year_data['Urban Area'].max() - latest_year_data['Urban Area'].min())
+    latest_year_data['Precipitation Normalized'] = (latest_year_data['Precipitation'] - latest_year_data['Precipitation'].min()) / (latest_year_data['Precipitation'].max() - latest_year_data['Precipitation'].min())
+    latest_year_data['Evaporation Normalized'] = 1 - (latest_year_data['Evaporation'] - latest_year_data['Evaporation'].min()) / (latest_year_data['Evaporation'].max() - latest_year_data['Evaporation'].min())
+    latest_year_data['Air Temperature Normalized'] = 1 - (latest_year_data['Air Temperature'] - latest_year_data['Air Temperature'].min()) / (latest_year_data['Air Temperature'].max() - latest_year_data['Air Temperature'].min())
+
+    for col in latest_year_data.columns:
+        if 'Normalized' in col:
+            latest_year_data[col] = latest_year_data[col].replace([np.inf, -np.inf, np.nan], 0)
+
+    # Trend calculation
+    trends = df.groupby('Lake').apply(lambda x: pd.Series({
+        'Vegetation Area Trend': np.polyfit(x['Year'], x['Vegetation Area'], 1)[0],
+        'Barren Area Trend': np.polyfit(x['Year'], x['Barren Area'], 1)[0],
+        'Urban Area Trend': np.polyfit(x['Year'], x['Urban Area'], 1)[0],
+        'Precipitation Trend': np.polyfit(x['Year'], x['Precipitation'], 1)[0],
+        'Evaporation Trend': np.polyfit(x['Year'], x['Evaporation'], 1)[0],
+        'Air Temperature Trend': np.polyfit(x['Year'], x['Air Temperature'], 1)[0],
+    }))
+
+    # Normalize trends
+    trends['Vegetation Area Trend Normalized'] = (trends['Vegetation Area Trend'] - trends['Vegetation Area Trend'].min()) / (trends['Vegetation Area Trend'].max() - trends['Vegetation Area Trend'].min())
+    trends['Barren Area Trend Normalized'] = 1 - (trends['Barren Area Trend'] - trends['Barren Area Trend'].min()) / (trends['Barren Area Trend'].max() - trends['Barren Area Trend'].min())
+    trends['Urban Area Trend Normalized'] = 1 - (trends['Urban Area Trend'] - trends['Urban Area Trend'].min()) / (trends['Urban Area Trend'].max() - trends['Urban Area Trend'].min())
+    trends['Precipitation Trend Normalized'] = (trends['Precipitation Trend'] - trends['Precipitation Trend'].min()) / (trends['Precipitation Trend'].max() - trends['Precipitation Trend'].min())
+    trends['Evaporation Trend Normalized'] = 1 - (trends['Evaporation Trend'] - trends['Evaporation Trend'].min()) / (trends['Evaporation Trend'].max() - trends['Evaporation Trend'].min())
+    trends['Air Temperature Trend Normalized'] = 1 - (trends['Air Temperature Trend'] - trends['Air Temperature Trend'].min()) / (trends['Air Temperature Trend'].max() - trends['Air Temperature Trend'].min())
+
+    for col in trends.columns:
+        if 'Normalized' in col:
+            trends[col] = trends[col].replace([np.inf, -np.inf, np.nan], 0)
+
+    # Combine normalized data
+    latest_year_data = latest_year_data.set_index('Lake')
+    combined_data = latest_year_data.join(trends, how='inner')
+
+    combined_data['Health Score'] = (
+        vegetation_weight * combined_data['Vegetation Area Normalized'] +
+        barren_weight * combined_data['Barren Area Normalized'] +
+        urban_weight * combined_data['Urban Area Normalized'] +
+        precipitation_weight * combined_data['Precipitation Normalized'] +
+        evaporation_weight * combined_data['Evaporation Normalized'] +
+        air_temperature_weight * combined_data['Air Temperature Normalized'] +
+        vegetation_weight * combined_data['Vegetation Area Trend Normalized'] +
+        barren_weight * combined_data['Barren Area Trend Normalized'] +
+        urban_weight * combined_data['Urban Area Trend Normalized'] +
+        precipitation_weight * combined_data['Precipitation Trend Normalized'] +
+        evaporation_weight * combined_data['Evaporation Trend Normalized'] +
+        air_temperature_weight * combined_data['Air Temperature Trend Normalized']
     )
-    return score
 
-# Streamlit UI
-st.title("Lake Health Score Comparator")
+    combined_data['Rank'] = combined_data['Health Score'].rank(ascending=False)
+    return combined_data.reset_index()
 
-# Ask how many lakes to compare
-num_lakes = st.number_input("How many lakes do you want to compare?", min_value=1, step=1)
 
-# Collect Lake IDs
-lake_ids = []
-for i in range(num_lakes):
-    lake_id = st.text_input(f"Enter Lake ID #{i + 1} (from 'Lake' column):", key=f"lake_{i}")
-    if lake_id:
-        lake_ids.append(lake_id.strip())
+# ---------- STREAMLIT APP START ----------
+st.title("Lake Health Score Dashboard")
 
-# When all IDs are entered
-if len(lake_ids) == num_lakes:
-    df = load_data()
+uploaded_file = st.file_uploader("Upload your CSV file", type=['csv'])
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
 
-    # Convert Lake IDs to correct type (if needed)
-    try:
-        lake_ids = [int(lid) for lid in lake_ids]
-    except ValueError:
-        st.error("Please enter valid numeric Lake IDs.")
-        st.stop()
+    lake_ids = df['Lake'].unique()
+    num = st.number_input("How many lakes do you want to compare?", min_value=1, max_value=len(lake_ids), step=1)
 
-    # Filter data
-    selected_lakes = df[df['Lake'].isin(lake_ids)]
+    selected_ids = []
+    for i in range(int(num)):
+        lake_id = st.selectbox(f"Select Lake ID #{i+1}", options=lake_ids, key=f"lake_{i}")
+        selected_ids.append(lake_id)
 
-    if selected_lakes.empty:
-        st.warning("No matching lakes found in the dataset.")
+    selected_df = df[df['Lake'].isin(selected_ids)]
+
+    if not selected_df.empty:
+        st.success("Data loaded for selected lakes!")
+        result_df = calculate_lake_health_score(selected_df)
+        st.dataframe(result_df)
+
+        csv = result_df.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Health Scores CSV", data=csv, file_name='lake_health_scores.csv', mime='text/csv')
     else:
-        # Define equal weights
-        weights = {
-            'vegetation': 1/6,
-            'barren': 1/6,
-            'urban': 1/6,
-            'precipitation': 1/6,
-            'evaporation': 1/6,
-            'temperature': 1/6
-        }
-
-        # Calculate scores
-        selected_lakes = selected_lakes.copy()
-        selected_lakes["Health Score"] = selected_lakes.apply(lambda row: calculate_health_score(row, weights), axis=1)
-
-        # Sort and rank
-        selected_lakes["Rank"] = selected_lakes["Health Score"].rank(ascending=False).astype(int)
-        selected_lakes = selected_lakes.sort_values("Rank")
-
-        st.subheader("Health Score Results")
-        st.dataframe(selected_lakes[["Lake", "Health Score", "Rank"] + [col for col in selected_lakes.columns if "Normalized" in col]])
-
-        # Download option
-        csv_data = selected_lakes.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download CSV of Selected Lakes",
-            data=csv_data,
-            file_name="selected_lakes_health_scores.csv",
-            mime="text/csv"
-        )
+        st.warning("No matching data found for selected lake IDs.")
