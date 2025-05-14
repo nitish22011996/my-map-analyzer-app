@@ -2,12 +2,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# --- Function to calculate lake health score ---
+# --- Lake Health Score Calculation Function ---
 def calculate_lake_health_score(df,
                                 vegetation_weight=1/6, barren_weight=1/6, urban_weight=1/6,
                                 precipitation_weight=1/6, evaporation_weight=1/6, air_temperature_weight=1/6):
 
-    # Ensure numeric types
+    # Convert columns to numeric
     for col in ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
@@ -15,7 +15,7 @@ def calculate_lake_health_score(df,
     if latest_year_data.empty:
         return pd.DataFrame()
 
-    # Normalize latest year values
+    # Normalize current levels
     latest_year_data['Vegetation Area Normalized'] = (latest_year_data['Vegetation Area'] - latest_year_data['Vegetation Area'].min()) / (latest_year_data['Vegetation Area'].max() - latest_year_data['Vegetation Area'].min())
     latest_year_data['Barren Area Normalized'] = 1 - (latest_year_data['Barren Area'] - latest_year_data['Barren Area'].min()) / (latest_year_data['Barren Area'].max() - latest_year_data['Barren Area'].min())
     latest_year_data['Urban Area Normalized'] = 1 - (latest_year_data['Urban Area'] - latest_year_data['Urban Area'].min()) / (latest_year_data['Urban Area'].max() - latest_year_data['Urban Area'].min())
@@ -27,7 +27,7 @@ def calculate_lake_health_score(df,
         if 'Normalized' in col:
             latest_year_data[col] = latest_year_data[col].replace([np.inf, -np.inf, np.nan], 0)
 
-    # Calculate trends
+    # Trends over time
     trends = df.groupby('Lake').apply(lambda x: pd.Series({
         'Vegetation Area Trend': np.polyfit(x['Year'], x['Vegetation Area'], 1)[0],
         'Barren Area Trend': np.polyfit(x['Year'], x['Barren Area'], 1)[0],
@@ -37,7 +37,7 @@ def calculate_lake_health_score(df,
         'Air Temperature Trend': np.polyfit(x['Year'], x['Air Temperature'], 1)[0],
     }))
 
-    # Normalize trend values
+    # Normalize trends
     trends['Vegetation Area Trend Normalized'] = (trends['Vegetation Area Trend'] - trends['Vegetation Area Trend'].min()) / (trends['Vegetation Area Trend'].max() - trends['Vegetation Area Trend'].min())
     trends['Barren Area Trend Normalized'] = 1 - (trends['Barren Area Trend'] - trends['Barren Area Trend'].min()) / (trends['Barren Area Trend'].max() - trends['Barren Area Trend'].min())
     trends['Urban Area Trend Normalized'] = 1 - (trends['Urban Area Trend'] - trends['Urban Area Trend'].min()) / (trends['Urban Area Trend'].max() - trends['Urban Area Trend'].min())
@@ -49,7 +49,7 @@ def calculate_lake_health_score(df,
         if 'Normalized' in col:
             trends[col] = trends[col].replace([np.inf, -np.inf, np.nan], 0)
 
-    # Combine
+    # Join and compute score
     latest_year_data = latest_year_data.set_index('Lake')
     combined_data = latest_year_data.join(trends, how='inner')
 
@@ -71,32 +71,36 @@ def calculate_lake_health_score(df,
     combined_data['Rank'] = combined_data['Health Score'].rank(ascending=False)
     return combined_data.reset_index()
 
-# --- STREAMLIT APP START ---
+
+# -------------------- STREAMLIT APP --------------------
+
 st.title("Lake Health Score Dashboard")
 
-# Load lake data from fixed CSV path
-df = pd.read_csv("lake_health_data.csv")  # <-- Change path if needed
+# Load CSV from fixed path
+df = pd.read_csv("lake_health_data.csv")
 
-# User input: number of lakes
+# Ask number of lakes
 num_lakes = st.number_input("How many lakes do you want to compare?", min_value=1, max_value=10, step=1)
 
-# Get lake IDs
+# Gather lake IDs
 lake_ids = []
 for i in range(num_lakes):
-    lake_id = st.text_input(f"Enter Lake ID #{i+1}", key=f"lake_input_{i}")
+    lake_id = st.text_input(f"Enter Lake ID #{i + 1}", key=f"lake_{i}")
     if lake_id:
         lake_ids.append(lake_id)
 
-# Filter and calculate
+# Process only if valid IDs provided
 if lake_ids:
     selected_df = df[df["Lake"].astype(str).isin(lake_ids)]
+
     if selected_df.empty:
         st.error("No data found for the entered Lake IDs.")
     else:
-        result_df = calculate_lake_health_score(selected_df)
+        # Compute and display health scores
+        health_scores = calculate_lake_health_score(selected_df)
         st.subheader("Lake Health Scores")
-        st.dataframe(result_df)
+        st.dataframe(health_scores)
 
-        # CSV download
-        csv = result_df.to_csv(index=False).encode('utf-8')
-        st.download_button("Download CSV", csv, "lake_health_scores.csv", "text/csv")
+        # Download only original data (not displayed)
+        csv = selected_df.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Original CSV for Selected Lakes", csv, "selected_lake_data.csv", "text/csv")
