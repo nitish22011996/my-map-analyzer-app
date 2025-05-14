@@ -75,7 +75,7 @@ def calculate_lake_health_score(df,
 st.title("Lake Health Score Dashboard")
 
 # Load lake data from fixed CSV path
-df = pd.read_csv("lake_5.csv")  # <-- Change path if needed
+df = pd.read_csv("lake_health_data.csv")  # <-- Change path if needed
 
 # User input: number of lakes
 num_lakes = st.number_input("How many lakes do you want to compare?", min_value=1, max_value=10, step=1)
