@@ -96,11 +96,16 @@ if lake_ids:
     if selected_df.empty:
         st.error("No data found for the entered Lake IDs.")
     else:
-        # Compute and display health scores
+        # Compute full health scores
         health_scores = calculate_lake_health_score(selected_df)
-        st.subheader("Lake Health Scores")
-        st.dataframe(health_scores)
 
-        # Download only original data (not displayed)
+        # ✅ Display only selected summary columns
+        st.subheader("Lake Health Scores")
+        st.dataframe(health_scores[["Lake", "Health Score", "Rank"]])  # Show only 3 columns
+
+        # ✅ Download only original data (not the computed scores)
         csv = selected_df.to_csv(index=False).encode('utf-8')
         st.download_button("Download Original CSV for Selected Lakes", csv, "selected_lake_data.csv", "text/csv")
+
+        # ✅ You still have access to full health_scores DataFrame internally
+        # e.g., use: health_scores.to_csv("full_scores.csv")
