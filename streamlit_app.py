@@ -214,7 +214,7 @@ def generate_comparative_pdf_report(df, results, lake_ids):
             y = height - 50
 
     # AI Insight
-    from your_ai_module import generate_ai_insight_combined  # Use actual import
+    # from your_ai_module import generate_ai_insight_combined  # Use actual import
     combined_prompt = "Provide a detailed comparative analysis for lakes: " + ", ".join(lake_ids) + ".\n"
     for _, row in results.iterrows():
         combined_prompt += (f"Lake {row['Lake']} has a health score of {row['Health Score']:.2f} and rank {int(row['Rank'])}.\n")
