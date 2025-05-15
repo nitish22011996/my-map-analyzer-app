@@ -104,9 +104,10 @@ def generate_lake_plot(lake_name, lake_data, comparison_data):
 
 from openai import OpenAI
 
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])  # or use os.environ["OPENAI_API_KEY"]
 
 def generate_ai_insight(lake_name, lake_data):
+    API_KEY = st.secrets["OPENROUTER_API_KEY"]
+    API_URL = "https://openrouter.ai/api/v1/chat/completions"
     prompt = f"""
     Provide a comparative analysis of why Lake {lake_name} has a health score of {lake_data['Health Score']:.2f} 
     and is ranked {int(lake_data['Rank'])} among the lakes. Include values and trends for:
