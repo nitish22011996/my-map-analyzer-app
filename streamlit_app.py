@@ -9,7 +9,7 @@ from reportlab.lib.utils import ImageReader
 import requests
 
 # --- Load CSV in background ---
-CSV_PATH = "/mnt/data/lake_data.csv"  # <-- change this to your actual CSV path
+CSV_PATH = "lake_health_data.csv"  # <-- change this to your actual CSV path
 
 @st.cache_data
 def load_data():
