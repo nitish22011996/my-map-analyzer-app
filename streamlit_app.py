@@ -7,6 +7,11 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 import requests
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
+from io import BytesIO
+import textwrap
 
 # --- Load CSV in background ---
 CSV_PATH = "lake_health_data.csv"  # <-- change this to your actual CSV path
@@ -122,43 +127,38 @@ def generate_ai_insight_combined(prompt):
     else:
         return "Failed to generate insight."
 
-# --- PDF Report Generation ---
 def generate_comparative_pdf_report(df, results, lake_ids):
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
-    y = height - 50
+    margin = 40
+    y = height - margin
+    max_chars_per_line = 100
 
-    def writeln(text, step=20):
+    def writeln(text, step=16):
         nonlocal y
         for line in text.split('\n'):
-            if y < 100:
-                c.showPage()
-                y = height - 50
-            while len(line) > 110:
-                c.drawString(40, y, line[:110])
-                line = line[110:]
-                y -= step
+            wrapped_lines = textwrap.wrap(line, width=max_chars_per_line)
+            for wline in wrapped_lines:
                 if y < 100:
                     c.showPage()
-                    y = height - 50
-            c.drawString(40, y, line)
-            y -= step
+                    y = height - margin
+                c.drawString(margin, y, wline)
+                y -= step
 
-    # Title page
-    writeln("Lake Health Comparative Report")
-    writeln("="*60)
-    writeln(f"Comparing Lakes: {', '.join(map(str,lake_ids))}")
+    # --- Title Page ---
+    writeln("Lake Health Comparative Report", 20)
+    writeln("=" * 60)
+    writeln(f"Comparing Lakes: {', '.join(map(str, lake_ids))}")
     writeln("")
 
-    # Summary table of health scores & ranks
     writeln("Summary of Health Scores and Ranks:")
     for _, row in results.iterrows():
         writeln(f"{row['Lake']}: Health Score = {row['Health Score']:.2f}, Rank = {int(row['Rank'])}")
     writeln("")
 
-    # Build AI prompt for combined comparative analysis
-    combined_prompt = "Provide a detailed comparative analysis for lakes: " + ", ".join(map(str,lake_ids)) + ".\n"
+    # --- AI Insight ---
+    combined_prompt = "Provide a detailed comparative analysis for lakes: " + ", ".join(map(str, lake_ids)) + ".\n"
     for _, row in results.iterrows():
         combined_prompt += (f"Lake {row['Lake']} has a health score of {row['Health Score']:.2f} and rank {int(row['Rank'])}.\n")
     combined_prompt += "Discuss the values and trends of Vegetation Area, Barren Area, Urban Area, Precipitation, Evaporation, and Air Temperature for these lakes."
@@ -169,17 +169,29 @@ def generate_comparative_pdf_report(df, results, lake_ids):
     writeln(ai_text)
     writeln("")
 
-    # Generate and add plots per metric
+    # --- Add Metric Plots ---
     metrics = ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']
     plots = generate_metric_time_series_plots_per_lake(df, lake_ids, metrics)
 
-    for title, img_buffer in plots:
-        c.showPage()
-        img = ImageReader(img_buffer)
-        max_width = width - 100
-        max_height = height - 200
-        c.drawString(40, height - 50, title)
-        c.drawImage(img, 50, 100, width=max_width, height=max_height, preserveAspectRatio=True, mask='auto')
+    cols, rows = 2, 3  # 2 columns, 3 rows per page
+    img_w, img_h = (width - 2 * margin) / cols - 10, (height - 2 * margin) / rows - 10
+    count = 0
+
+    for title, buf in plots:
+        col = count % cols
+        row = (count // cols) % rows
+
+        if count % (cols * rows) == 0:
+            c.showPage()
+
+        x = margin + col * (img_w + 10)
+        y = height - margin - (row + 1) * (img_h + 10)
+        img = ImageReader(buf)
+        c.drawImage(img, x, y, width=img_w, height=img_h, preserveAspectRatio=True, mask='auto')
+        c.setFont("Helvetica", 8)
+        c.drawString(x, y + img_h + 2, title)
+
+        count += 1
 
     c.save()
     buffer.seek(0)
