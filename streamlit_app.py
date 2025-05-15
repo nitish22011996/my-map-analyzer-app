@@ -8,6 +8,10 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 import requests
 
+# --- Load data only once ---
+@st.cache_data
+def load_data():
+    return pd.read_csv("lake_health_data.csv")
 # --- Lake Health Score Calculation Function ---
 def calculate_lake_health_score(df,
                                 vegetation_weight=1/6, barren_weight=1/6, urban_weight=1/6,
