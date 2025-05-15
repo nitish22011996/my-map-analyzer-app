@@ -86,28 +86,22 @@ def generate_metric_time_series_plots_per_lake(df, lake_ids, metrics):
         lake_df = df[df['Lake'].astype(str) == str(lake)].copy()
         if lake_df.empty:
             continue
-        plt.figure(figsize=(10, 5), dpi=150)
         for metric in metrics:
-            # Convert column to numeric, coerce errors to NaN
+            plt.figure(figsize=(10, 5), dpi=150)
             lake_df[metric] = pd.to_numeric(lake_df[metric], errors='coerce')
-
-            # If the metric is all NaN or empty, skip plotting it
             if lake_df[metric].dropna().empty:
                 continue
-            
             plt.plot(lake_df['Year'], lake_df[metric], marker='o', label=metric)
-        
-        plt.title(f"Time Series for Lake {lake}")
-        plt.xlabel("Year")
-        plt.ylabel("Value")
-        plt.legend()
-        plt.grid(True)
-        
-        buf = BytesIO()
-        plt.savefig(buf, format='PNG')
-        plt.close()
-        buf.seek(0)
-        images.append((lake, buf))
+            plt.title(f"Time Series of {metric} for Lake {lake}")
+            plt.xlabel("Year")
+            plt.ylabel(metric)
+            plt.legend()
+            plt.grid(True)
+            buf = BytesIO()
+            plt.savefig(buf, format='PNG')
+            plt.close()
+            buf.seek(0)
+            images.append((f"Lake {lake} - {metric}", buf))
     return images
 
 # --- AI insight generation for all lakes combined ---
@@ -129,7 +123,7 @@ def generate_ai_insight_combined(prompt):
         return "Failed to generate insight."
 
 # --- PDF Report Generation ---
-def generate_metric_time_series_plots_per_lake(df, lake_ids, metrics):
+def generate_comparative_pdf_report(df, results, lake_ids):
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -179,12 +173,12 @@ def generate_metric_time_series_plots_per_lake(df, lake_ids, metrics):
     metrics = ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']
     plots = generate_metric_time_series_plots_per_lake(df, lake_ids, metrics)
 
-    for metric, img_buffer in plots:
+    for title, img_buffer in plots:
         c.showPage()
         img = ImageReader(img_buffer)
         max_width = width - 100
         max_height = height - 200
-        c.drawString(40, height - 50, f"Time Series Plot for {metric}")
+        c.drawString(40, height - 50, title)
         c.drawImage(img, 50, 100, width=max_width, height=max_height, preserveAspectRatio=True, mask='auto')
 
     c.save()
@@ -195,6 +189,9 @@ def generate_metric_time_series_plots_per_lake(df, lake_ids, metrics):
 st.title("Lake Health Score Dashboard")
 
 # Load data automatically
+def load_data():
+    return pd.read_csv("lake_health_data.csv")
+
 df = load_data()
 st.subheader("Dataset Preview")
 st.dataframe(df.head())
