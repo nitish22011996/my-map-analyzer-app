@@ -7,13 +7,13 @@ from io import BytesIO
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
+import openai
 
 # --- Lake Health Score Calculation Function ---
 def calculate_lake_health_score(df,
                                 vegetation_weight=1/6, barren_weight=1/6, urban_weight=1/6,
                                 precipitation_weight=1/6, evaporation_weight=1/6, air_temperature_weight=1/6):
 
-    # Convert columns to numeric
     for col in ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
@@ -21,7 +21,6 @@ def calculate_lake_health_score(df,
     if latest_year_data.empty:
         return pd.DataFrame()
 
-    # Normalize current levels
     latest_year_data['Vegetation Area Normalized'] = (latest_year_data['Vegetation Area'] - latest_year_data['Vegetation Area'].min()) / (latest_year_data['Vegetation Area'].max() - latest_year_data['Vegetation Area'].min())
     latest_year_data['Barren Area Normalized'] = 1 - (latest_year_data['Barren Area'] - latest_year_data['Barren Area'].min()) / (latest_year_data['Barren Area'].max() - latest_year_data['Barren Area'].min())
     latest_year_data['Urban Area Normalized'] = 1 - (latest_year_data['Urban Area'] - latest_year_data['Urban Area'].min()) / (latest_year_data['Urban Area'].max() - latest_year_data['Urban Area'].min())
@@ -33,7 +32,6 @@ def calculate_lake_health_score(df,
         if 'Normalized' in col:
             latest_year_data[col] = latest_year_data[col].replace([np.inf, -np.inf, np.nan], 0)
 
-    # Trends over time
     trends = df.groupby('Lake').apply(lambda x: pd.Series({
         'Vegetation Area Trend': np.polyfit(x['Year'], x['Vegetation Area'], 1)[0],
         'Barren Area Trend': np.polyfit(x['Year'], x['Barren Area'], 1)[0],
@@ -43,7 +41,6 @@ def calculate_lake_health_score(df,
         'Air Temperature Trend': np.polyfit(x['Year'], x['Air Temperature'], 1)[0],
     }))
 
-    # Normalize trends
     for col in trends.columns:
         if 'Trend' in col:
             if 'Barren' in col or 'Urban' in col or 'Evaporation' in col or 'Air Temperature' in col:
@@ -52,7 +49,6 @@ def calculate_lake_health_score(df,
                 trends[col + ' Normalized'] = (trends[col] - trends[col].min()) / (trends[col].max() - trends[col].min())
             trends[col + ' Normalized'] = trends[col + ' Normalized'].replace([np.inf, -np.inf, np.nan], 0)
 
-    # Join and compute score
     latest_year_data = latest_year_data.set_index('Lake')
     combined_data = latest_year_data.join(trends, how='inner')
 
@@ -106,6 +102,23 @@ def generate_lake_plot(lake_name, lake_data, comparison_data):
     img_buffer.seek(0)
     return img_buffer
 
+# --- AI-generated Insight ---
+def generate_ai_insight(lake_name, lake_data):
+    prompt = f"""
+    Provide a detailed comparative report for Lake {lake_name}, explaining why it received a health score of {lake_data['Health Score']:.2f} and was ranked {int(lake_data['Rank'])} among all lakes. 
+    Include reasoning based on:
+    Vegetation Area: {lake_data['Vegetation Area']}, Barren Area: {lake_data['Barren Area']}, Urban Area: {lake_data['Urban Area']}, 
+    Precipitation: {lake_data['Precipitation']}, Evaporation: {lake_data['Evaporation']}, Air Temperature: {lake_data['Air Temperature']},
+    and their respective trends over time.
+    """
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7
+    )
+    return response.choices[0].message.content.strip()
+
 # --- PDF Report Generation ---
 def generate_pdf_report(lake_name, lake_data, comparison_data):
     buffer = BytesIO()
@@ -115,40 +128,19 @@ def generate_pdf_report(lake_name, lake_data, comparison_data):
 
     def writeln(text, step=20):
         nonlocal y
-        if y < 100:
-            c.showPage()
-            y = height - 50
-        c.drawString(40, y, text)
-        y -= step
+        for line in text.split('\n'):
+            if y < 100:
+                c.showPage()
+                y = height - 50
+            c.drawString(40, y, line[:110])
+            y -= step
 
     writeln(f"Lake Health Report - {lake_name}")
     writeln("=" * 60)
-    writeln(f"Health Score: {lake_data['Health Score']:.2f} | Rank: {int(lake_data['Rank'])}")
-    writeln("")
+    writeln(f"Health Score: {lake_data['Health Score']:.2f} | Rank: {int(lake_data['Rank'])}\n")
 
-    for key in ["Vegetation Area", "Barren Area", "Urban Area", "Precipitation", "Evaporation", "Air Temperature"]:
-        lake_val = lake_data[key]
-        trend_key = key + " Trend"
-        trend_val = lake_data.get(trend_key, 0)
-        comparison_avg = comparison_data[key].mean()
-        comparison_trend_avg = comparison_data[trend_key].mean()
-
-        comp_text = f"{key}: {lake_val:.2f} (Trend: {trend_val:.2f}) "
-        if lake_val > comparison_avg:
-            comp_text += "is higher than average. "
-        elif lake_val < comparison_avg:
-            comp_text += "is lower than average. "
-        else:
-            comp_text += "is close to the average. "
-
-        if trend_val > comparison_trend_avg:
-            comp_text += "Trend is increasing faster."
-        elif trend_val < comparison_trend_avg:
-            comp_text += "Trend is slower than average."
-        else:
-            comp_text += "Trend is similar to average."
-
-        writeln(comp_text)
+    ai_text = generate_ai_insight(lake_name, lake_data)
+    writeln(ai_text)
 
     img_buffer = generate_lake_plot(lake_name, lake_data, comparison_data)
     img = ImageReader(img_buffer)
