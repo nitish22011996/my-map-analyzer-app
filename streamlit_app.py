@@ -177,7 +177,7 @@ def generate_metric_time_series_plots_per_lake(df, lake_ids, metrics):
 
     # Generate and add plots per metric
     metrics = ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']
-    plots = generate_metric_time_series_plots(df, lake_ids, metrics)
+    plots = generate_metric_time_series_plots_per_lake(df, lake_ids, metrics)
 
     for metric, img_buffer in plots:
         c.showPage()
