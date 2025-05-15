@@ -102,23 +102,32 @@ def generate_lake_plot(lake_name, lake_data, comparison_data):
     img_buffer.seek(0)
     return img_buffer
 
-# --- AI-generated Insight ---
+from openai import OpenAI
+
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])  # or use os.environ["OPENAI_API_KEY"]
+
 def generate_ai_insight(lake_name, lake_data):
     prompt = f"""
-    Provide a detailed comparative report for Lake {lake_name}, explaining why it received a health score of {lake_data['Health Score']:.2f} and was ranked {int(lake_data['Rank'])} among all lakes. 
-    Include reasoning based on:
-    Vegetation Area: {lake_data['Vegetation Area']}, Barren Area: {lake_data['Barren Area']}, Urban Area: {lake_data['Urban Area']}, 
-    Precipitation: {lake_data['Precipitation']}, Evaporation: {lake_data['Evaporation']}, Air Temperature: {lake_data['Air Temperature']},
-    and their respective trends over time.
+    Provide a comparative analysis of why Lake {lake_name} has a health score of {lake_data['Health Score']:.2f} 
+    and is ranked {int(lake_data['Rank'])} among the lakes. Include values and trends for:
+
+    Vegetation Area: {lake_data['Vegetation Area']} (Trend: {lake_data.get('Vegetation Area Trend', 0)}),
+    Barren Area: {lake_data['Barren Area']} (Trend: {lake_data.get('Barren Area Trend', 0)}),
+    Urban Area: {lake_data['Urban Area']} (Trend: {lake_data.get('Urban Area Trend', 0)}),
+    Precipitation: {lake_data['Precipitation']} (Trend: {lake_data.get('Precipitation Trend', 0)}),
+    Evaporation: {lake_data['Evaporation']} (Trend: {lake_data.get('Evaporation Trend', 0)}),
+    Air Temperature: {lake_data['Air Temperature']} (Trend: {lake_data.get('Air Temperature Trend', 0)}).
+
+    Write a detailed report in paragraph form comparing this lake to others.
     """
 
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
+    response = client.chat.completions.create(
+        model="gpt-4",  # or "gpt-3.5-turbo"
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.7
+        temperature=0.7,
+        max_tokens=600
     )
     return response.choices[0].message.content.strip()
-
 # --- PDF Report Generation ---
 def generate_pdf_report(lake_name, lake_data, comparison_data):
     buffer = BytesIO()
@@ -128,29 +137,48 @@ def generate_pdf_report(lake_name, lake_data, comparison_data):
 
     def writeln(text, step=20):
         nonlocal y
+        # Split long texts into lines and paginate if needed
         for line in text.split('\n'):
             if y < 100:
                 c.showPage()
                 y = height - 50
-            c.drawString(40, y, line[:110])
+            # Wrap text if longer than ~110 chars (basic handling)
+            while len(line) > 110:
+                c.drawString(40, y, line[:110])
+                line = line[110:]
+                y -= step
+                if y < 100:
+                    c.showPage()
+                    y = height - 50
+            c.drawString(40, y, line)
             y -= step
 
+    # Title & Header
     writeln(f"Lake Health Report - {lake_name}")
     writeln("=" * 60)
-    writeln(f"Health Score: {lake_data['Health Score']:.2f} | Rank: {int(lake_data['Rank'])}\n")
+    writeln(f"Health Score: {lake_data['Health Score']:.2f} | Rank: {int(lake_data['Rank'])}")
+    writeln("")
 
+    # AI Generated Comparative Analysis
     ai_text = generate_ai_insight(lake_name, lake_data)
+    writeln("AI-Generated Comparative Analysis:")
+    writeln("-" * 40)
     writeln(ai_text)
+    writeln("")
 
+    # Add a new page for the plot
+    c.showPage()
     img_buffer = generate_lake_plot(lake_name, lake_data, comparison_data)
     img = ImageReader(img_buffer)
-    c.showPage()
-    c.drawImage(img, 50, 200, width=500, preserveAspectRatio=True, mask='auto')
+
+    # Calculate image dimensions to fit width with aspect ratio
+    max_width = width - 100
+    max_height = height - 200
+    c.drawImage(img, 50, 100, width=max_width, height=max_height, preserveAspectRatio=True, mask='auto')
 
     c.save()
     buffer.seek(0)
     return buffer
-
 # --- Streamlit App ---
 st.title("Lake Health Score Dashboard")
 df = pd.read_csv("lake_health_data.csv")
