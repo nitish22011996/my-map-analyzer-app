@@ -80,23 +80,34 @@ def calculate_lake_health_score(df,
     return combined_data.reset_index()
 
 # --- Generate time series plots for each metric ---
-def generate_metric_time_series_plots(df, lake_ids, metrics):
+def generate_metric_time_series_plots_per_lake(df, lake_ids, metrics):
     images = []
-    for metric in metrics:
-        plt.figure(figsize=(8,4), dpi=150)
-        for lake in lake_ids:
-            lake_df = df[df['Lake'] == lake]
-            plt.plot(lake_df['Year'], lake_df[metric], label=str(lake))
-        plt.title(f"Time Series of {metric}")
+    for lake in lake_ids:
+        lake_df = df[df['Lake'].astype(str) == str(lake)].copy()
+        if lake_df.empty:
+            continue
+        plt.figure(figsize=(10, 5), dpi=150)
+        for metric in metrics:
+            # Convert column to numeric, coerce errors to NaN
+            lake_df[metric] = pd.to_numeric(lake_df[metric], errors='coerce')
+
+            # If the metric is all NaN or empty, skip plotting it
+            if lake_df[metric].dropna().empty:
+                continue
+            
+            plt.plot(lake_df['Year'], lake_df[metric], marker='o', label=metric)
+        
+        plt.title(f"Time Series for Lake {lake}")
         plt.xlabel("Year")
-        plt.ylabel(metric)
+        plt.ylabel("Value")
         plt.legend()
         plt.grid(True)
+        
         buf = BytesIO()
         plt.savefig(buf, format='PNG')
         plt.close()
         buf.seek(0)
-        images.append((metric, buf))
+        images.append((lake, buf))
     return images
 
 # --- AI insight generation for all lakes combined ---
