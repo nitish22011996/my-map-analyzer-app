@@ -8,6 +8,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 import openai
+import requests
 
 # --- Lake Health Score Calculation Function ---
 def calculate_lake_health_score(df,
