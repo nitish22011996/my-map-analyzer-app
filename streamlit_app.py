@@ -8,10 +8,13 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 import requests
 
-# --- Load data only once ---
+# --- Load CSV in background ---
+CSV_PATH = "/mnt/data/lake_data.csv"  # <-- change this to your actual CSV path
+
 @st.cache_data
 def load_data():
-    return pd.read_csv("lake_health_data.csv")
+    return pd.read_csv(CSV_PATH)
+
 # --- Lake Health Score Calculation Function ---
 def calculate_lake_health_score(df,
                                 vegetation_weight=1/6, barren_weight=1/6, urban_weight=1/6,
@@ -180,16 +183,8 @@ def generate_comparative_pdf_report(df, results, lake_ids):
 # --- Streamlit App ---
 st.title("Lake Health Score Dashboard")
 
-# Load data (you can replace with your own CSV or DataFrame source)
-uploaded_file = st.file_uploader("Upload your lake dataset CSV", type=["csv"])
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    st.success("Dataset loaded successfully.")
-else:
-    st.info("Please upload a lake dataset CSV to proceed.")
-    st.stop()
-
-# Show data preview
+# Load data automatically
+df = load_data()
 st.subheader("Dataset Preview")
 st.dataframe(df.head())
 
