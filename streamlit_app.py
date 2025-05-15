@@ -108,6 +108,11 @@ from openai import OpenAI
 def generate_ai_insight(lake_name, lake_data):
     API_KEY = st.secrets["OPENROUTER_API_KEY"]
     API_URL = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    }
+
     prompt = f"""
     Provide a comparative analysis of why Lake {lake_name} has a health score of {lake_data['Health Score']:.2f} 
     and is ranked {int(lake_data['Rank'])} among the lakes. Include values and trends for:
@@ -122,13 +127,16 @@ def generate_ai_insight(lake_name, lake_data):
     Write a detailed report in paragraph form comparing this lake to others.
     """
 
-    response = client.chat.completions.create(
-        model="gpt-4",  # or "gpt-3.5-turbo"
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=600
-    )
-    return response.choices[0].message.content.strip()
+    data = {
+        "model": "deepseek/deepseek-chat:free",
+        "messages": [{"role": "user", "content": prompt}]
+    }
+
+    response = requests.post(API_URL, json=data, headers=headers)
+    if response.status_code == 200:
+        return response.json()["choices"][0]["message"]["content"]
+    else:
+        return "Failed to generate insight."
 # --- PDF Report Generation ---
 def generate_pdf_report(lake_name, lake_data, comparison_data):
     buffer = BytesIO()
