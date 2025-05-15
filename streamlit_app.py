@@ -129,7 +129,7 @@ def generate_ai_insight_combined(prompt):
         return "Failed to generate insight."
 
 # --- PDF Report Generation ---
-def generate_comparative_pdf_report(df, results, lake_ids):
+def generate_metric_time_series_plots_per_lake(df, lake_ids, metrics):
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
