@@ -188,6 +188,7 @@ def generate_grouped_plots_by_metric(df, lake_ids, metrics):
         grouped_images.append((metric, buf))
     return grouped_images
 
+# Final PDF generation function
 def generate_comparative_pdf_report(df, results, lake_ids):
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -210,69 +211,62 @@ def generate_comparative_pdf_report(df, results, lake_ids):
                 c.showPage()
                 y = height - 60
 
-    # Title page and health score bars (same as before)
-    # ... [Your existing title and bars code here] ...
-    # Show AI insight page with Historical Extremes Overview
+    # Title Page
+    c.setFont("Helvetica-Bold", 18)
+    c.drawCentredString(width / 2, y, "Lake Health Comparative Report")
+    y -= 40
+    c.setFont("Helvetica", 12)
+    writeln(f"Lakes compared: {', '.join(lake_ids)}")
+    y -= 10
+    c.showPage()
+    y = height - 50
 
-    # Factors to summarize
-    factors = ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']
+    # Colored Health Ranking Bars
+    writeln("Health Score Rankings (Color-coded):")
+    bar_start_x = 80
+    bar_height = 16
+    for i, row in results.iterrows():
+        score = row['Health Score']
+        rank = int(row['Rank'])
+        color = colors.green if rank == 1 else colors.orange if rank == 2 else colors.red
+        c.setFillColor(color)
+        bar_width = score * 200  # Scaled bar
+        c.rect(bar_start_x, y, bar_width, bar_height, fill=1)
+        c.setFillColor(colors.black)
+        c.drawString(bar_start_x + bar_width + 10, y + 2, f"Lake {row['Lake']} (Score: {score:.2f}, Rank: {rank})")
+        y -= (bar_height + 10)
+        if y < 100:
+            c.showPage()
+            y = height - 50
 
-    # Prepare historical summary text per lake
-    historical_text = "📉 Historical Extremes Overview\n" + "-"*40 + "\n"
-    for lake in lake_ids:
-        historical_text += f"Lake {lake}:\n"
-        lake_df = df[df['Lake'].astype(str) == str(lake)].copy()
-        latest_year = lake_df['Year'].max()
-        latest_data = lake_df[lake_df['Year'] == latest_year]
-
-        for factor in factors:
-            if factor not in lake_df.columns:
-                continue
-            factor_series = pd.to_numeric(lake_df[factor], errors='coerce').dropna()
-            if factor_series.empty:
-                continue
-
-            min_val = factor_series.min()
-            min_year = lake_df.loc[factor_series.idxmin(), 'Year']
-            max_val = factor_series.max()
-            max_year = lake_df.loc[factor_series.idxmax(), 'Year']
-
-            latest_val = latest_data[factor].values[0] if not latest_data.empty else np.nan
-            if pd.isna(latest_val) or latest_val == 0:
-                pct_lower = pct_higher = "N/A"
-            else:
-                pct_lower = f"{((latest_val - min_val) / latest_val * 100):.2f}%"
-                pct_higher = f"{((max_val - latest_val) / latest_val * 100):.2f}%"
-
-            historical_text += (
-                f"  {factor}:\n"
-                f"    Lowest: {min_val} in {int(min_year)} → {pct_lower} lower than {int(latest_year)}\n"
-                f"    Highest: {max_val} in {int(max_year)} → {pct_higher} higher than {int(latest_year)}\n"
-            )
-        historical_text += "\n"
-
-    # Write historical summary first
-    writeln(historical_text, step=14)
-
-    # Generate AI Insight (reuse your combined_prompt or make new one incorporating historical info)
+    # AI Insight
+    # from your_ai_module import generate_ai_insight_combined  # Use actual import
     combined_prompt = "Provide a detailed comparative analysis for lakes: " + ", ".join(lake_ids) + ".\n"
     for _, row in results.iterrows():
         combined_prompt += (f"Lake {row['Lake']} has a health score of {row['Health Score']:.2f} and rank {int(row['Rank'])}.\n")
-    combined_prompt += "Discuss the values and trends of Vegetation Area, Barren Area, Urban Area, Precipitation, Evaporation, and Air Temperature for these lakes, "
-    combined_prompt += "taking into account the historical extremes overview provided."
-
+    combined_prompt += "Discuss the values and trends of Vegetation Area, Barren Area, Urban Area, Precipitation, Evaporation, and Air Temperature for these lakes."
     ai_text = generate_ai_insight_combined(combined_prompt)
-    writeln("AI-Generated Comparative Analysis:\n" + "-"*40 + "\n" + ai_text)
-
+    writeln("AI-Generated Comparative Analysis:\n" + "-"*40)
+    writeln(ai_text)
     c.showPage()
 
-    # Continue with plots as you already have
-    # ...
+    # Plots grouped by metric (with 2 plots per page in 2x2 layout)
+    metrics = ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']
+    plots = generate_grouped_plots_by_metric(df, lake_ids, metrics)
+
+    for i in range(0, len(plots), 2):  # 2 plots per page
+        y_positions = [height / 2 + 20, 50]
+        for j in range(2):
+            if i + j >= len(plots): break
+            metric, img_buf = plots[i + j]
+            c.drawString(40, y_positions[j] + 270, f"{metric}")
+            img = ImageReader(img_buf)
+            c.drawImage(img, 50, y_positions[j], width=500, height=250, preserveAspectRatio=True)
+        c.showPage()
 
     c.save()
     buffer.seek(0)
     return buffer
-
 
 # --- Streamlit App ---
 st.title("Lake Health Score Dashboard")
