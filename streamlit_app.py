@@ -16,6 +16,51 @@ import seaborn as sns
 import numpy as np
 from scipy.stats import linregress
 
+# Define available factors and their type
+all_factors = {
+    "Vegetation Area": "positive",
+    "Barren Area": "negative",
+    "Urban Area": "negative",
+    "Precipitation": "positive",
+    "Evaporation": "negative",
+    "Air Temperature": "negative"
+}
+
+st.subheader("🔍 Step 1: Select Factors for Lake Health Analysis")
+
+selected_factors = {k: v for k, v in all_factors.items() if st.checkbox(k, value=True)}
+
+if not selected_factors:
+    st.warning("Please select at least one factor.")
+else:
+    st.markdown("### ⚖️ Step 2: Choose Weighting Strategy")
+    use_equal_weights = st.radio("How do you want to assign weights?", ["Equal Weights", "Manual Weights"])
+
+    weights = {}
+    weight_sum_valid = True
+
+    if use_equal_weights == "Equal Weights":
+        equal_weight = 1 / len(selected_factors)
+        weights = {factor: equal_weight for factor in selected_factors}
+    else:
+        st.markdown("### 🎯 Step 3: Assign Manual Weights (Must Sum to 1.0)")
+        total_weight = 0
+        for factor in selected_factors:
+            weights[factor] = st.number_input(
+                f"Weight for {factor}", min_value=0.0, max_value=1.0, step=0.01, value=0.0, key=f"weight_{factor}"
+            )
+            total_weight += weights[factor]
+
+        if abs(total_weight - 1.0) > 0.01:
+            st.error("🚨 The total weight must sum to 1.0. Adjust the values.")
+            weight_sum_valid = False
+
+    if use_equal_weights == "Equal Weights" or weight_sum_valid:
+        if st.button("✅ Run Health Score Analysis"):
+            results = calculate_lake_health_score(selected_df, **weights)
+            st.success("Lake health score calculated.")
+            st.dataframe(results)
+
 # --- Load CSV in background ---
 CSV_PATH = "lake_health_data.csv"  # <-- change this to your actual CSV path
 
@@ -23,10 +68,7 @@ CSV_PATH = "lake_health_data.csv"  # <-- change this to your actual CSV path
 def load_data():
     return pd.read_csv(CSV_PATH)
 
-# --- Lake Health Score Calculation Function ---
-def calculate_lake_health_score(df,
-                                vegetation_weight=1/6, barren_weight=1/6, urban_weight=1/6,
-                                precipitation_weight=1/6, evaporation_weight=1/6, air_temperature_weight=1/6):
+def calculate_lake_health_score(df, weights: dict = None):
     def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0
     def rev_norm(x): return 1 - norm(x)
 
@@ -39,9 +81,49 @@ def calculate_lake_health_score(df,
     for col in ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    latest_year_data = df[df['Year'] == df['Year'].max()].copy()
+    latest_year = df['Year'].max()
+    latest_year_data = df[df['Year'] == latest_year].copy()
+
     if latest_year_data.empty:
-        return pd.DataFrame()
+        df['Health Score'] = 0
+        df['Note'] = 'No data for latest year'
+        return df
+
+    # If no weights provided, use equal weights
+    if weights is None:
+        weights = {
+            'Vegetation Area': 1/6,
+            'Barren Area': 1/6,
+            'Urban Area': 1/6,
+            'Precipitation': 1/6,
+            'Evaporation': 1/6,
+            'Air Temperature': 1/6
+        }
+
+    # Normalize weights so their sum is 1
+    total_weight = sum(weights.values())
+    weights = {k: v / total_weight for k, v in weights.items()}
+
+    # Calculate normalized scores
+    latest_year_data['Vegetation Score'] = norm(latest_year_data['Vegetation Area'])
+    latest_year_data['Barren Score'] = rev_norm(latest_year_data['Barren Area'])
+    latest_year_data['Urban Score'] = rev_norm(latest_year_data['Urban Area'])
+    latest_year_data['Precipitation Score'] = norm(latest_year_data['Precipitation'])
+    latest_year_data['Evaporation Score'] = rev_norm(latest_year_data['Evaporation'])
+    latest_year_data['Air Temperature Score'] = rev_norm(latest_year_data['Air Temperature'])
+
+    # Compute final weighted health score
+    latest_year_data['Health Score'] = (
+        latest_year_data['Vegetation Score'] * weights['Vegetation Area'] +
+        latest_year_data['Barren Score'] * weights['Barren Area'] +
+        latest_year_data['Urban Score'] * weights['Urban Area'] +
+        latest_year_data['Precipitation Score'] * weights['Precipitation'] +
+        latest_year_data['Evaporation Score'] * weights['Evaporation'] +
+        latest_year_data['Air Temperature Score'] * weights['Air Temperature']
+    )
+
+    return latest_year_data[['Lake', 'Year', 'Health Score']]
+
 
     # Normalize latest values
     latest_year_data['Vegetation Area Normalized'] = norm(latest_year_data['Vegetation Area'])
