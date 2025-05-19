@@ -262,37 +262,46 @@ def generate_comparative_pdf_report(df, results, lake_ids):
     buffer.seek(0)
     return buffer
 
-# --- Streamlit App ---
 st.title("Lake Health Score Dashboard")
 
 # Load data automatically
 df = load_data()
-st.subheader("Dataset Preview")
-st.dataframe(df.head())
 
-# Sidebar inputs for weights
-st.sidebar.header("Adjust Factor Weights (Sum ideally = 1)")
-vegetation_weight = st.sidebar.slider("Vegetation Area Weight", 0.0, 1.0, 1/6, 0.01)
-barren_weight = st.sidebar.slider("Barren Area Weight", 0.0, 1.0, 1/6, 0.01)
-urban_weight = st.sidebar.slider("Urban Area Weight", 0.0, 1.0, 1/6, 0.01)
-precipitation_weight = st.sidebar.slider("Precipitation Weight", 0.0, 1.0, 1/6, 0.01)
-evaporation_weight = st.sidebar.slider("Evaporation Weight", 0.0, 1.0, 1/6, 0.01)
-air_temperature_weight = st.sidebar.slider("Air Temperature Weight", 0.0, 1.0, 1/6, 0.01)
 
-# Normalize weights so they sum to 1
-total_weight = sum([vegetation_weight, barren_weight, urban_weight,
-                    precipitation_weight, evaporation_weight, air_temperature_weight])
-if total_weight == 0:
-    st.sidebar.error("At least one weight must be greater than zero!")
-else:
-    vegetation_weight /= total_weight
-    barren_weight /= total_weight
-    urban_weight /= total_weight
-    precipitation_weight /= total_weight
-    evaporation_weight /= total_weight
-    air_temperature_weight /= total_weight
 
-# Input lake IDs as comma separated list
+# Initialize weights in session state if not present
+if "vegetation_weight" not in st.session_state:
+    for factor in ['vegetation_weight', 'barren_weight', 'urban_weight',
+                   'precipitation_weight', 'evaporation_weight', 'air_temperature_weight']:
+        st.session_state[factor] = 1/6
+
+def set_equal_weights():
+    for factor in ['vegetation_weight', 'barren_weight', 'urban_weight',
+                   'precipitation_weight', 'evaporation_weight', 'air_temperature_weight']:
+        st.session_state[factor] = 1/6
+
+st.sidebar.header("Adjust Factor Weights (Total must be exactly 1.0)")
+
+if st.sidebar.button("Set All Weights Equal"):
+    set_equal_weights()
+
+vegetation_weight = st.sidebar.slider("Vegetation Area Weight", 0.0, 1.0, st.session_state.vegetation_weight, 0.01, key='vegetation_weight')
+barren_weight = st.sidebar.slider("Barren Area Weight", 0.0, 1.0, st.session_state.barren_weight, 0.01, key='barren_weight')
+urban_weight = st.sidebar.slider("Urban Area Weight", 0.0, 1.0, st.session_state.urban_weight, 0.01, key='urban_weight')
+precipitation_weight = st.sidebar.slider("Precipitation Weight", 0.0, 1.0, st.session_state.precipitation_weight, 0.01, key='precipitation_weight')
+evaporation_weight = st.sidebar.slider("Evaporation Weight", 0.0, 1.0, st.session_state.evaporation_weight, 0.01, key='evaporation_weight')
+air_temperature_weight = st.sidebar.slider("Air Temperature Weight", 0.0, 1.0, st.session_state.air_temperature_weight, 0.01, key='air_temperature_weight')
+weights = [
+    vegetation_weight, barren_weight, urban_weight,
+    precipitation_weight, evaporation_weight, air_temperature_weight
+]
+
+total_weight = sum(weights)
+st.sidebar.markdown(f"**Total Weight:** {total_weight:.2f}")
+
+# Submit button enabled only if total_weight is exactly 1.0 (allow tiny float tolerance)
+submit_weights = st.sidebar.button("Submit Weights", disabled=abs(total_weight - 1.0) > 0.01)
+
 lake_input = st.text_input("Enter lake IDs separated by commas (e.g., 630,2168266,737797):")
 lake_ids = [l.strip() for l in lake_input.split(",") if l.strip() != ""]
 
@@ -301,22 +310,24 @@ if lake_ids:
     if filtered_df.empty:
         st.warning("No data found for the given lake IDs.")
     else:
-        results = calculate_lake_health_score(
-            filtered_df,
-            vegetation_weight, barren_weight, urban_weight,
-            precipitation_weight, evaporation_weight, air_temperature_weight
-        )
-        st.subheader("Health Scores & Rankings")
-        st.dataframe(results[['Lake', 'Health Score', 'Rank']].sort_values('Rank'))
-
-        # Generate PDF report button
-        if st.button("Generate Comparative PDF Report"):
-            pdf_buffer = generate_comparative_pdf_report(df, results, lake_ids)
-            st.download_button(
-                label="Download PDF Report",
-                data=pdf_buffer,
-                file_name="lake_health_comparative_report.pdf",
-                mime="application/pdf"
+        if submit_weights:
+            results = calculate_lake_health_score(
+                filtered_df,
+                vegetation_weight, barren_weight, urban_weight,
+                precipitation_weight, evaporation_weight, air_temperature_weight
             )
+            st.subheader("Health Scores & Rankings")
+            st.dataframe(results[['Lake', 'Health Score', 'Rank']].sort_values('Rank'))
+
+            if st.button("Generate Comparative PDF Report"):
+                pdf_buffer = generate_comparative_pdf_report(df, results, lake_ids)
+                st.download_button(
+                    label="Download PDF Report",
+                    data=pdf_buffer,
+                    file_name="lake_health_comparative_report.pdf",
+                    mime="application/pdf"
+                )
+        else:
+            st.info("Adjust the weights so their total sums exactly to 1.00 and press 'Submit Weights'.")
 else:
     st.info("Please enter at least one lake ID to proceed.")
