@@ -27,6 +27,14 @@ def load_data():
 def calculate_lake_health_score(df,
                                 vegetation_weight=1/6, barren_weight=1/6, urban_weight=1/6,
                                 precipitation_weight=1/6, evaporation_weight=1/6, air_temperature_weight=1/6):
+    def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0
+    def rev_norm(x): return 1 - norm(x)
+
+    required_columns = ['Lake', 'Year', 'Vegetation Area', 'Barren Area', 'Urban Area',
+                        'Precipitation', 'Evaporation', 'Air Temperature']
+    for col in required_columns:
+        if col not in df.columns:
+            raise ValueError(f"Missing column: {col}")
 
     for col in ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -35,58 +43,76 @@ def calculate_lake_health_score(df,
     if latest_year_data.empty:
         return pd.DataFrame()
 
-    # Normalize latest year values
-    latest_year_data['Vegetation Area Normalized'] = (latest_year_data['Vegetation Area'] - latest_year_data['Vegetation Area'].min()) / (latest_year_data['Vegetation Area'].max() - latest_year_data['Vegetation Area'].min() + 1e-9)
-    latest_year_data['Barren Area Normalized'] = 1 - (latest_year_data['Barren Area'] - latest_year_data['Barren Area'].min()) / (latest_year_data['Barren Area'].max() - latest_year_data['Barren Area'].min() + 1e-9)
-    latest_year_data['Urban Area Normalized'] = 1 - (latest_year_data['Urban Area'] - latest_year_data['Urban Area'].min()) / (latest_year_data['Urban Area'].max() - latest_year_data['Urban Area'].min() + 1e-9)
-    latest_year_data['Precipitation Normalized'] = (latest_year_data['Precipitation'] - latest_year_data['Precipitation'].min()) / (latest_year_data['Precipitation'].max() - latest_year_data['Precipitation'].min() + 1e-9)
-    latest_year_data['Evaporation Normalized'] = 1 - (latest_year_data['Evaporation'] - latest_year_data['Evaporation'].min()) / (latest_year_data['Evaporation'].max() - latest_year_data['Evaporation'].min() + 1e-9)
-    latest_year_data['Air Temperature Normalized'] = 1 - (latest_year_data['Air Temperature'] - latest_year_data['Air Temperature'].min()) / (latest_year_data['Air Temperature'].max() - latest_year_data['Air Temperature'].min() + 1e-9)
+    # Normalize latest values
+    latest_year_data['Vegetation Area Normalized'] = norm(latest_year_data['Vegetation Area'])
+    latest_year_data['Barren Area Normalized'] = rev_norm(latest_year_data['Barren Area'])
+    latest_year_data['Urban Area Normalized'] = rev_norm(latest_year_data['Urban Area'])
+    latest_year_data['Precipitation Normalized'] = norm(latest_year_data['Precipitation'])
+    latest_year_data['Evaporation Normalized'] = rev_norm(latest_year_data['Evaporation'])
+    latest_year_data['Air Temperature Normalized'] = rev_norm(latest_year_data['Air Temperature'])
 
     for col in latest_year_data.columns:
         if 'Normalized' in col:
             latest_year_data[col] = latest_year_data[col].replace([np.inf, -np.inf, np.nan], 0)
 
-    # Calculate trends per lake
-    trends = df.groupby('Lake').apply(lambda x: pd.Series({
-        'Vegetation Area Trend': np.polyfit(x['Year'], x['Vegetation Area'], 1)[0],
-        'Barren Area Trend': np.polyfit(x['Year'], x['Barren Area'], 1)[0],
-        'Urban Area Trend': np.polyfit(x['Year'], x['Urban Area'], 1)[0],
-        'Precipitation Trend': np.polyfit(x['Year'], x['Precipitation'], 1)[0],
-        'Evaporation Trend': np.polyfit(x['Year'], x['Evaporation'], 1)[0],
-        'Air Temperature Trend': np.polyfit(x['Year'], x['Air Temperature'], 1)[0],
-    }))
+    def get_slope_and_p(x, y):
+        slope, _, _, p_value, _ = linregress(x, y)
+        return slope, p_value
 
-    # Normalize trends
+    trends = df.groupby('Lake').apply(lambda x: pd.Series({
+        'Vegetation Area Trend': get_slope_and_p(x['Year'], x['Vegetation Area'])[0],
+        'Vegetation Area PValue': get_slope_and_p(x['Year'], x['Vegetation Area'])[1],
+        'Barren Area Trend': get_slope_and_p(x['Year'], x['Barren Area'])[0],
+        'Barren Area PValue': get_slope_and_p(x['Year'], x['Barren Area'])[1],
+        'Urban Area Trend': get_slope_and_p(x['Year'], x['Urban Area'])[0],
+        'Urban Area PValue': get_slope_and_p(x['Year'], x['Urban Area'])[1],
+        'Precipitation Trend': get_slope_and_p(x['Year'], x['Precipitation'])[0],
+        'Precipitation PValue': get_slope_and_p(x['Year'], x['Precipitation'])[1],
+        'Evaporation Trend': get_slope_and_p(x['Year'], x['Evaporation'])[0],
+        'Evaporation PValue': get_slope_and_p(x['Year'], x['Evaporation'])[1],
+        'Air Temperature Trend': get_slope_and_p(x['Year'], x['Air Temperature'])[0],
+        'Air Temperature PValue': get_slope_and_p(x['Year'], x['Air Temperature'])[1],
+    })).reset_index()
+
+    for factor, desirable in [
+        ('Vegetation Area', 'positive'),
+        ('Barren Area', 'negative'),
+        ('Urban Area', 'negative'),
+        ('Precipitation', 'positive'),
+        ('Evaporation', 'negative'),
+        ('Air Temperature', 'negative')
+    ]:
+        slope_col = f"{factor} Trend"
+        pval_col = f"{factor} PValue"
+        trends[f"{slope_col} Normalized"] = norm(trends[slope_col]) if desirable == 'positive' else rev_norm(trends[slope_col])
+        trends[f"{pval_col} Normalized"] = 1 - norm(trends[pval_col])  # lower p-value is better
+
     for col in trends.columns:
-        if 'Trend' in col:
-            if any(x in col for x in ['Barren', 'Urban', 'Evaporation', 'Air Temperature']):
-                trends[col + ' Normalized'] = 1 - (trends[col] - trends[col].min()) / (trends[col].max() - trends[col].min() + 1e-9)
-            else:
-                trends[col + ' Normalized'] = (trends[col] - trends[col].min()) / (trends[col].max() - trends[col].min() + 1e-9)
-            trends[col + ' Normalized'] = trends[col + ' Normalized'].replace([np.inf, -np.inf, np.nan], 0)
+        if 'Normalized' in col:
+            trends[col] = trends[col].replace([np.inf, -np.inf, np.nan], 0)
 
     latest_year_data = latest_year_data.set_index('Lake')
+    trends = trends.set_index('Lake')
     combined_data = latest_year_data.join(trends, how='inner')
 
+    def factor_score(factor, weight):
+        return weight * (
+            (combined_data[f'{factor} Normalized'] +
+             combined_data[f'{factor} Trend Normalized'] +
+             combined_data[f'{factor} PValue Normalized']) / 3
+        )
+
     combined_data['Health Score'] = (
-        vegetation_weight * combined_data['Vegetation Area Normalized'] +
-        barren_weight * combined_data['Barren Area Normalized'] +
-        urban_weight * combined_data['Urban Area Normalized'] +
-        precipitation_weight * combined_data['Precipitation Normalized'] +
-        evaporation_weight * combined_data['Evaporation Normalized'] +
-        air_temperature_weight * combined_data['Air Temperature Normalized'] +
-        vegetation_weight * combined_data['Vegetation Area Trend Normalized'] +
-        barren_weight * combined_data['Barren Area Trend Normalized'] +
-        urban_weight * combined_data['Urban Area Trend Normalized'] +
-        precipitation_weight * combined_data['Precipitation Trend Normalized'] +
-        evaporation_weight * combined_data['Evaporation Trend Normalized'] +
-        air_temperature_weight * combined_data['Air Temperature Trend Normalized']
+        factor_score('Vegetation Area', vegetation_weight) +
+        factor_score('Barren Area', barren_weight) +
+        factor_score('Urban Area', urban_weight) +
+        factor_score('Precipitation', precipitation_weight) +
+        factor_score('Evaporation', evaporation_weight) +
+        factor_score('Air Temperature', air_temperature_weight)
     )
 
     combined_data['Rank'] = combined_data['Health Score'].rank(ascending=False)
     return combined_data.reset_index()
-
 # --- Generate time series plots for each metric ---
 def generate_metric_time_series_plots_per_lake(df, lake_ids, metrics):
     images = []
