@@ -40,7 +40,7 @@ if "selected_lake_ids" not in st.session_state:
 # Submit button to save selected lake ID
 if st.sidebar.button("Submit"):
     if selected_lake_id not in st.session_state.selected_lake_ids:
-        st.session_state.selected_lake_ids.append(selected_lake_id)
+        st.session_state.selected_lake_ids.append(int(selected_lake_id))
 
 # Display selected lake IDs
 st.subheader("Selected Lake IDs")
