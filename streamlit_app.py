@@ -13,18 +13,18 @@ df = pd.read_csv(file_path)
 df.columns = df.columns.str.strip()
 
 # Sidebar: State selection
-df['STATE'] = df['STATE'].astype(str)
+df['State'] = df['State'].astype(str)
 df['District'] = df['District'].astype(str)
-sorted_states = sorted(df['STATE'].unique())
+sorted_states = sorted(df['State'].unique())
 selected_state = st.sidebar.selectbox("Select State", sorted_states)
 
 # Sidebar: District selection based on state
-filtered_districts = df[df['STATE'] == selected_state]['District'].unique()
+filtered_districts = df[df['State'] == selected_state]['District'].unique()
 sorted_districts = sorted(filtered_districts)
 selected_district = st.sidebar.selectbox("Select District", sorted_districts)
 
 # Filter lakes in selected district
-filtered_lakes = df[(df['STATE'] == selected_state) & (df['District'] == selected_district)]
+filtered_lakes = df[(df['State'] == selected_state) & (df['District'] == selected_district)]
 
 if filtered_lakes.empty:
     st.warning("No lakes found in selected district.")
