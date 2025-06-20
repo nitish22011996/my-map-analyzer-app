@@ -10,14 +10,15 @@ file_path = 'HDI_lake_district.csv'
 df = pd.read_csv(file_path, usecols=['Lat', 'Lon', 'Lake_ID', 'District', 'State'])
 df.columns = df.columns.str.strip()
 
-# Convert relevant columns to string
+# Clean data
 df['State'] = df['State'].astype(str).str.strip()
 df['District'] = df['District'].astype(str).str.strip()
 
-# Sidebar: State and District selection
+# Sidebar: State selection
 sorted_states = sorted(df['State'].unique())
 selected_state = st.sidebar.selectbox("Select State", sorted_states)
 
+# Sidebar: District selection
 filtered_districts = df[df['State'] == selected_state]['District'].unique()
 sorted_districts = sorted(filtered_districts)
 selected_district = st.sidebar.selectbox("Select District", sorted_districts)
@@ -25,18 +26,23 @@ selected_district = st.sidebar.selectbox("Select District", sorted_districts)
 # Filter lakes in selected district
 filtered_lakes = df[(df['State'] == selected_state) & (df['District'] == selected_district)]
 
-# Initialize session state list
+# Sidebar: Lake ID dropdown
+lake_ids = sorted(filtered_lakes['Lake_ID'].unique())
+selected_lake_id = st.sidebar.selectbox("Select Lake ID", lake_ids)
+
+# Initialize session state
 if "selected_lake_ids" not in st.session_state:
     st.session_state.selected_lake_ids = []
 
-# Submit button: add all lake IDs from selected district
+# Submit button adds selected lake ID
 if st.sidebar.button("Submit"):
-    new_ids = filtered_lakes['Lake_ID'].tolist()
-    for lake_id in new_ids:
-        if lake_id not in st.session_state.selected_lake_ids:
-            st.session_state.selected_lake_ids.append(lake_id)
+    if selected_lake_id not in st.session_state.selected_lake_ids:
+        st.session_state.selected_lake_ids.append(selected_lake_id)
+        st.success(f"Lake ID {selected_lake_id} added.")
+    else:
+        st.info(f"Lake ID {selected_lake_id} is already selected.")
 
-# Display selected lake IDs
+# Display selected Lake IDs
 st.subheader("Selected Lake IDs")
 if st.session_state.selected_lake_ids:
     st.write(", ".join(str(lid) for lid in st.session_state.selected_lake_ids))
@@ -60,7 +66,7 @@ if st.session_state.selected_lake_ids:
         mime='text/csv'
     )
 
-# Show map
+# Map of lakes in selected district
 st.subheader(f"Lakes in {selected_district}, {selected_state}")
 if not filtered_lakes.empty:
     m = folium.Map(location=[filtered_lakes['Lat'].mean(), filtered_lakes['Lon'].mean()], zoom_start=7)
@@ -80,5 +86,7 @@ if not filtered_lakes.empty:
 
     st_folium(m, width=700, height=500)
 else:
+    st.warning("No lakes found in selected district.")
+
     st.warning("No lakes found in selected district.")
 
