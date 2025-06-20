@@ -12,6 +12,18 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from scipy.stats import linregress
 
+# Page setup
+st.set_page_config(layout="wide")
+
+# Custom CSS to fix input box width
+st.markdown("""
+<style>
+    .stTextInput input {
+        width: 100% !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # File paths
 HDI_PATH = 'HDI_lake_district.csv'
 HEALTH_PATH = 'lake_health_data.csv'
@@ -36,7 +48,7 @@ if "selected_lake_ids" not in st.session_state:
     st.session_state.selected_lake_ids = []
 
 # --- Layout: Three Columns ---
-col1, col2, col3 = st.columns([1.2, 1.5, 2])
+col1, col2, col3 = st.columns([1.3, 1.7, 2.5])
 
 # --- Column 1: Lake Selection ---
 with col1:
@@ -94,7 +106,7 @@ with col2:
                 icon=folium.Icon(color='blue')
             ).add_to(marker_cluster)
 
-        st_folium(m, width=450, height=500)
+        st_folium(m, width=500, height=500)
 
 # --- Column 3: Lake Health Dashboard ---
 with col3:
@@ -165,8 +177,7 @@ with col3:
 
             result_df = calculate_lake_health_score(selected_df)
             st.dataframe(result_df[['Lake', 'Health Score', 'Rank']])
-
-            def generate_metric_plots(df, lake_ids, metrics):
+def generate_metric_plots(df, lake_ids, metrics):
                 images = []
                 for metric in metrics:
                     plt.figure(figsize=(10, 6), dpi=150)
