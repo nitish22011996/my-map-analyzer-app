@@ -20,7 +20,7 @@ LOCATION_DATA_PATH = 'HDI_lake_district.csv'
 HEALTH_DATA_PATH = "lake_health_data.csv"
 
 
-# --- FUNCTION DEFINITIONS ---
+# --- FUNCTION DEFINITIONS (No changes in this section) ---
 
 @st.cache_data
 def load_data(file_path):
@@ -355,31 +355,38 @@ with col2:
     lake_ids_to_analyze = st.session_state.get("selected_lake_ids", [])
     
     if st.button("Analyze Selected Lakes", disabled=not lake_ids_to_analyze, use_container_width=True):
+        # ** THE FIX IS HERE **
+        # 1. Clear all previous results for a clean slate on every run.
+        st.session_state.analysis_results = None
+        st.session_state.pdf_buffer = None
+        st.session_state.selected_df_for_download = None
+        
         with st.spinner("Analyzing..."):
             try:
+                # 2. Perform the main data loading and scoring.
                 df_health = load_data(HEALTH_DATA_PATH)
                 lake_ids_str = [str(i) for i in lake_ids_to_analyze]
                 selected_df = df_health[df_health["Lake"].astype(str).isin(lake_ids_str)]
 
                 if selected_df.empty:
                     st.error(f"No health data found for the selected Lake IDs: {', '.join(lake_ids_str)}")
-                    st.session_state.analysis_results = None
-                    st.session_state.pdf_buffer = None
-                    st.session_state.selected_df_for_download = None
                 else:
+                    # 3. If scoring succeeds, save the results.
                     results = calculate_lake_health_score(selected_df)
                     st.session_state.analysis_results = results
                     st.session_state.selected_df_for_download = selected_df
-                    st.session_state.pdf_buffer = generate_comparative_pdf_report(selected_df, results, lake_ids_to_analyze)
+                    
+                    # 4. Now, attempt the PDF generation in its own safe block.
+                    try:
+                        st.session_state.pdf_buffer = generate_comparative_pdf_report(selected_df, results, lake_ids_to_analyze)
+                    except Exception as pdf_e:
+                        # If only the PDF fails, show a warning but keep other results.
+                        st.warning(f"⚠️ Could not generate PDF report. Error: {pdf_e}")
+                        st.session_state.pdf_buffer = None # Ensure buffer is None
 
-            except FileNotFoundError:
-                st.error(f"Health data file not found at '{HEALTH_DATA_PATH}'.")
             except Exception as e:
-                st.error(f"An error occurred during analysis: {e}")
-                # Clear results on any generic error during processing
-                st.session_state.analysis_results = None
-                st.session_state.pdf_buffer = None
-                st.session_state.selected_df_for_download = None
+                # This catches critical errors (e.g., file not found).
+                st.error(f"A critical error occurred during analysis: {e}")
 
     st.markdown("---") 
 
@@ -403,7 +410,7 @@ with col2:
             st.download_button(
                 label="📄 Download PDF Report",
                 data=st.session_state.pdf_buffer,
-                file_name=f"comparative_report_{'_'.join(map(str, lake_ids_to_analyze))}.pdf",
+                file_name=f"comparative_report_{'_'.join(map(str, lake_ids_to_analyze))}.csv",
                 mime="application/pdf",
                 use_container_width=True
             )
