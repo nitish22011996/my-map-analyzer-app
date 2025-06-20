@@ -37,12 +37,10 @@ selected_district = st.selectbox("Select District", districts)
 
 filtered_lakes = mapping_df[(mapping_df['State'] == selected_state) &
                             (mapping_df['District'] == selected_district)]
-lake_options = filtered_lakes[['Lake', 'Lake_ID']].drop_duplicates()
-lake_names = lake_options['Lake'].tolist()
-lake_ids_dict = dict(zip(lake_options['Lake'], lake_options['Lake_ID']))
+lake_options = filtered_lakes[['Lake_ID']].drop_duplicates()
+lake_ids = lake_options['Lake_ID'].astype(str).tolist()
 
-selected_lakes_by_name = st.multiselect("Select Lake(s)", lake_names)
-selected_lake_ids = [str(lake_ids_dict[name]) for name in selected_lakes_by_name]
+selected_lake_ids = st.multiselect("Select Lake ID(s)", lake_ids)
 
 # --- Show Preview ---
 st.subheader("Dataset Preview")
