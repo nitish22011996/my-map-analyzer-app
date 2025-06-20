@@ -116,7 +116,6 @@ def calculate_lake_health_score(df,
 
 
 def generate_ai_insight_combined(prompt):
-    """Generates AI insights using the OpenRouter API."""
     API_KEY = st.secrets.get("OPENROUTER_API_KEY")
     if not API_KEY:
         return "API Key not found. Please set OPENROUTER_API_KEY in Streamlit secrets."
@@ -136,7 +135,6 @@ def generate_ai_insight_combined(prompt):
 
 
 def generate_grouped_plots_by_metric(df, lake_ids, metrics):
-    """Generates one plot per metric, comparing all selected lakes."""
     grouped_images = []
     for metric in metrics:
         plt.figure(figsize=(10, 6), dpi=150)
@@ -175,7 +173,6 @@ def generate_grouped_plots_by_metric(df, lake_ids, metrics):
 
 
 def generate_comparative_pdf_report(df, results, lake_ids):
-    """Generates a multi-page comparative PDF report for the selected lakes."""
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -266,7 +263,12 @@ def generate_comparative_pdf_report(df, results, lake_ids):
 st.set_page_config(layout="wide")
 st.title("🌊 Lake Health Comparative Dashboard")
 
-# --- Sidebar for Lake Selection ---
+# Initialize session state for analysis results
+if 'analysis_results' not in st.session_state:
+    st.session_state.analysis_results = None
+    st.session_state.selected_df_for_download = None
+    st.session_state.pdf_buffer = None
+
 with st.sidebar:
     st.header("Lake Selector")
     try:
@@ -292,21 +294,21 @@ with st.sidebar:
         if st.button("Add Lake to Comparison"):
             if selected_lake_id not in st.session_state.selected_lake_ids:
                 st.session_state.selected_lake_ids.append(selected_lake_id)
-                st.success(f"Added Lake {selected_lake_id}.")
             else:
                 st.info(f"Lake {selected_lake_id} is already in the list.")
+            # Clear previous results when the list is modified
+            st.session_state.analysis_results = None 
+
     except FileNotFoundError:
         st.error(f"Location data file not found at '{LOCATION_DATA_PATH}'.")
         filtered_lakes = pd.DataFrame() 
 
-# CHANGE: Restructured the main page into two columns for a more compact view
 col1, col2 = st.columns([0.6, 0.4])
 
 with col1:
     st.subheader(f"Map of Lakes in {selected_district}, {selected_state}")
     if not filtered_lakes.empty:
         map_center = [filtered_lakes['Lat'].mean(), filtered_lakes['Lon'].mean()]
-        # CHANGE: Reduced map height slightly to better fit on one screen
         m = folium.Map(location=map_center, zoom_start=8)
         marker_cluster = MarkerCluster().add_to(m)
 
@@ -329,7 +331,7 @@ with col2:
     edited_ids_text = st.text_area(
         "Edit Lake IDs (comma-separated)", 
         value=ids_text,
-        height=100, # CHANGE: Set a fixed height for the text area
+        height=100,
         help="Add lakes using the sidebar or type IDs directly here."
     )
     
@@ -338,45 +340,65 @@ with col2:
             updated_ids = [int(x.strip()) for x in edited_ids_text.split(",") if x.strip().isdigit()]
         else:
             updated_ids = []
+        
+        # If the list has changed, clear old results
+        if updated_ids != st.session_state.selected_lake_ids:
+            st.session_state.analysis_results = None
+        
         st.session_state.selected_lake_ids = updated_ids
     except (ValueError, TypeError):
         st.warning("Invalid input. Please enter only comma-separated numbers.")
 
-    # CHANGE: The "Clear Selection" button has been removed from here.
-
-    # CHANGE: The entire analysis and reporting section is now moved inside the second column.
-    st.markdown("---") # Visual separator
-    
     lake_ids_to_analyze = st.session_state.get("selected_lake_ids", [])
+    
+    # --- CHANGE: Add the "Analyze" button ---
+    if st.button("Analyze Selected Lakes", disabled=not lake_ids_to_analyze, use_container_width=True):
+        with st.spinner("Analyzing..."):
+            try:
+                df_health = load_data(HEALTH_DATA_PATH)
+                lake_ids_str = [str(i) for i in lake_ids_to_analyze]
+                selected_df = df_health[df_health["Lake"].astype(str).isin(lake_ids_str)]
 
-    if lake_ids_to_analyze:
-        try:
-            df_health = load_data(HEALTH_DATA_PATH)
-            lake_ids_str = [str(i) for i in lake_ids_to_analyze]
-            selected_df = df_health[df_health["Lake"].astype(str).isin(lake_ids_str)]
+                if selected_df.empty:
+                    st.error(f"No health data found for the selected Lake IDs: {', '.join(lake_ids_str)}")
+                    st.session_state.analysis_results = None # Clear results on error
+                else:
+                    # Calculate and store all results in the session state
+                    st.session_state.analysis_results = calculate_lake_health_score(selected_df)
+                    st.session_state.selected_df_for_download = selected_df
+                    st.session_state.pdf_buffer = generate_comparative_pdf_report(selected_df, st.session_state.analysis_results, lake_ids_to_analyze)
 
-            if selected_df.empty:
-                st.error(f"No health data found for the selected Lake IDs: {', '.join(lake_ids_str)}")
-            else:
-                with st.spinner("Calculating health scores..."):
-                    results = calculate_lake_health_score(selected_df)
-                    
-                    st.subheader("Health Score Results")
-                    st.dataframe(results[["Lake", "Health Score", "Rank"]].style.format({"Health Score": "{:.3f}"}))
+            except FileNotFoundError:
+                st.error(f"Health data file not found at '{HEALTH_DATA_PATH}'.")
+            except Exception as e:
+                st.error(f"An error occurred: {e}")
 
-                    st.subheader("Download Center")
-                    
-                    pdf_buffer = generate_comparative_pdf_report(selected_df, results, lake_ids_to_analyze)
-                    st.download_button(
-                        label="📄 Download PDF Report",
-                        data=pdf_buffer,
-                        file_name=f"comparative_report_{'_'.join(lake_ids_str)}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True # Makes button wider
-                    )
-        except FileNotFoundError:
-            st.error(f"Health data file not found at '{HEALTH_DATA_PATH}'.")
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
+    st.markdown("---") # Visual separator
+
+    # --- CHANGE: Display results only if they exist in the session state ---
+    if st.session_state.analysis_results is not None and not st.session_state.analysis_results.empty:
+        st.subheader("Health Score Results")
+        st.dataframe(st.session_state.analysis_results[["Lake", "Health Score", "Rank"]].style.format({"Health Score": "{:.3f}"}))
+
+        st.subheader("Download Center")
+        
+        # --- CHANGE: Restore the CSV Download button ---
+        csv_data = st.session_state.selected_df_for_download.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Filtered Data (CSV)",
+            data=csv_data,
+            file_name=f"filtered_data_{'_'.join(map(str, lake_ids_to_analyze))}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+        st.download_button(
+            label="📄 Download PDF Report",
+            data=st.session_state.pdf_buffer,
+            file_name=f"comparative_report_{'_'.join(map(str, lake_ids_to_analyze))}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
     else:
-        st.info("ℹ️ Use the sidebar to add lakes to the analysis list.")
+        # Show this message if no analysis has been run yet
+        st.info("ℹ️ Add lakes to the list above and click 'Analyze Selected Lakes'.")
