@@ -3,7 +3,6 @@ import pandas as pd
 import folium
 from folium.plugins import MarkerCluster
 from streamlit_folium import st_folium
-import io
 
 # Load only required columns
 file_path = 'HDI_lake_district.csv'
@@ -34,7 +33,7 @@ selected_lake_id = st.sidebar.selectbox("Select Lake ID", lake_ids)
 if "selected_lake_ids" not in st.session_state:
     st.session_state.selected_lake_ids = []
 
-# Submit button adds selected lake ID
+# Submit adds lake ID
 if st.sidebar.button("Submit"):
     if selected_lake_id not in st.session_state.selected_lake_ids:
         st.session_state.selected_lake_ids.append(selected_lake_id)
@@ -42,29 +41,22 @@ if st.sidebar.button("Submit"):
     else:
         st.info(f"Lake ID {selected_lake_id} is already selected.")
 
-# Display selected Lake IDs
-st.subheader("Selected Lake IDs")
-if st.session_state.selected_lake_ids:
-    st.write(", ".join(str(lid) for lid in st.session_state.selected_lake_ids))
-else:
-    st.write("No lake IDs selected yet.")
+# Editable text input for selected Lake IDs
+st.subheader("Selected Lake IDs (editable)")
+ids_text = ", ".join(str(i) for i in st.session_state.selected_lake_ids)
+edited_ids = st.text_input("Edit Lake IDs (comma-separated)", value=ids_text)
 
-# Clear selected IDs
+# Update session state from edited text input
+try:
+    updated_ids = [int(x.strip()) for x in edited_ids.split(",") if x.strip().isdigit()]
+    st.session_state.selected_lake_ids = updated_ids
+except:
+    st.warning("Invalid input. Please enter comma-separated numbers.")
+
+# Clear button
 if st.button("Clear Selection"):
     st.session_state.selected_lake_ids = []
     st.experimental_rerun()
-
-# Download selected lake IDs
-if st.session_state.selected_lake_ids:
-    csv_data = pd.DataFrame({'Lake_ID': st.session_state.selected_lake_ids})
-    csv_buffer = io.StringIO()
-    csv_data.to_csv(csv_buffer, index=False)
-    st.download_button(
-        label="Download Selected Lake IDs as CSV",
-        data=csv_buffer.getvalue(),
-        file_name='selected_Lake_IDs.csv',
-        mime='text/csv'
-    )
 
 # Map of lakes in selected district
 st.subheader(f"Lakes in {selected_district}, {selected_state}")
@@ -87,6 +79,3 @@ if not filtered_lakes.empty:
     st_folium(m, width=700, height=500)
 else:
     st.warning("No lakes found in selected district.")
-
-    st.warning("No lakes found in selected district.")
-
