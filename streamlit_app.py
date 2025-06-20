@@ -60,11 +60,14 @@ def generate_ai_insight_combined(prompt):
         "model": "deepseek/deepseek-chat:free",
         "messages": [{"role": "user", "content": prompt}]
     }
-    response = requests.post(API_URL, json=data, headers=headers)
-    if response.status_code == 200:
-        return response.json()["choices"][0]["message"]["content"]
-    else:
-        return "Failed to generate insight."
+    try:
+        response = requests.post(API_URL, json=data, headers=headers, timeout=15)
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"]
+        else:
+            return f"Failed to generate insight: {response.status_code}"
+    except Exception as e:
+        return f"AI generation error: {str(e)}"
 
 # --- Grouped Plot Generation ---
 def generate_grouped_plots_by_metric(df, lake_ids, metrics):
@@ -165,14 +168,14 @@ def generate_comparative_pdf_report(df, results, lake_ids):
             metric, img_buf = plots[i + j]
             c.drawString(40, y_positions[j] + 270, f"{metric}")
             img = ImageReader(img_buf)
-            c.drawImage(img, 50, y_positions[j], width=500, height=250, preserveAspectRatio=True)
+            c.drawImage(img, 50, y_positions[j], width=500, height=250, preserveAspectRatio=True, anchor='sw')
         c.showPage()
 
     c.save()
     buffer.seek(0)
     return buffer
 
-# --- Health Score Calculation Function (with weights) ---
+# --- Health Score Calculation Function ---
 def calculate_lake_health_score(df,
                                 vegetation_weight=1/6, barren_weight=1/6, urban_weight=1/6,
                                 precipitation_weight=1/6, evaporation_weight=1/6, air_temperature_weight=1/6):
@@ -254,7 +257,7 @@ if selected_lake_ids:
 
             pdf_buffer = generate_comparative_pdf_report(selected_df, results, selected_lake_ids)
             st.download_button(
-                label="📄 Download Combined Lake Health Report",
+                label="\ud83d\udcc4 Download Combined Lake Health Report",
                 data=pdf_buffer,
                 file_name="combined_lake_health_report.pdf",
                 mime="application/pdf"
@@ -263,3 +266,4 @@ if selected_lake_ids:
             st.warning("No data available for the latest year.")
 else:
     st.info("Please select at least one lake to continue.")
+
