@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # Load the CSV data
-file_path = 'Area_final.csv'
+file_path = 'HDI_lake_district.csv'
 df = pd.read_csv(file_path)
 df.columns = df.columns.str.strip()
 
