@@ -1,83 +1,51 @@
 import streamlit as st
 import pandas as pd
-import folium
-from folium.plugins import MarkerCluster
-from streamlit_folium import st_folium
 
 # Load the CSV data
-file_path = 'HDI_lake_district.csv'  # Replace with your actual file path
+file_path = 'Area_final.csv'
 df = pd.read_csv(file_path)
-
-# Clean column names
 df.columns = df.columns.str.strip()
 
-# Sort state and district dropdowns
+# Clean data types
 df['STATE'] = df['STATE'].astype(str)
 df['District'] = df['District'].astype(str)
-sorted_states = sorted(df['STATE'].unique())
-default_state = sorted_states[0]
 
-# Sidebar: Select State
+# Sidebar: State selection
 st.sidebar.subheader("Select State")
-selected_state = st.sidebar.selectbox("Choose a State:", sorted_states, index=0)
+sorted_states = sorted(df['STATE'].unique())
+selected_state = st.sidebar.selectbox("Choose a State:", sorted_states)
 
-# Filter districts for selected state
+# Sidebar: District selection based on state
 filtered_districts = df[df['STATE'] == selected_state]['District'].unique()
 sorted_districts = sorted(filtered_districts)
-default_district = sorted_districts[0]
+selected_district = st.sidebar.selectbox("Choose a District:", sorted_districts)
 
-# Sidebar: Select District
-st.sidebar.subheader("Select District")
-selected_district = st.sidebar.selectbox("Choose a District:", sorted_districts, index=0)
-
-# Filter lakes in selected district
+# Filter lakes based on state and district
 filtered_lakes = df[(df['STATE'] == selected_state) & (df['District'] == selected_district)]
-
-# Ensure lakes exist
-if filtered_lakes.empty:
-    st.error("No lakes found for the selected State and District.")
-    st.stop()
-
 lake_ids = sorted(filtered_lakes['Lake_id'].unique())
-default_lake_id = lake_ids[0]
 
-# Sidebar: Select Lake ID
-st.sidebar.subheader("Select Lake ID")
-selected_lake_id = st.sidebar.selectbox("Choose a Lake ID:", lake_ids, index=0)
+# Sidebar: Multi-select Lake IDs
+st.sidebar.subheader("Select Lake IDs")
+selected_lake_ids = st.sidebar.multiselect("Choose Lake IDs:", lake_ids)
 
 # Submit button
-submit = st.sidebar.button("Submit Selection")
+submit = st.sidebar.button("Submit")
 
-# Session state to store selected lake IDs
-if "selected_lake_ids" not in st.session_state:
-    st.session_state.selected_lake_ids = []
-
-# If submit is clicked, store the selection
+# Display selected lake IDs and CSV download
 if submit:
-    if selected_lake_id not in st.session_state.selected_lake_ids:
-        st.session_state.selected_lake_ids.append(selected_lake_id)
+    if selected_lake_ids:
+        st.subheader("Selected Lake IDs")
+        st.write(selected_lake_ids)
 
-# Display selected lake IDs
-st.subheader("Selected Lake IDs")
-if st.session_state.selected_lake_ids:
-    st.write(", ".join(str(lid) for lid in st.session_state.selected_lake_ids))
-else:
-    st.write("No lake selected yet.")
+        # Create DataFrame and download button
+        selected_df = pd.DataFrame(selected_lake_ids, columns=["Lake_id"])
+        csv_data = selected_df.to_csv(index=False)
 
-# Show map with filtered lakes
-st.subheader(f"Map of Lakes in {selected_district}, {selected_state}")
-m = folium.Map(location=[filtered_lakes['Lat'].mean(), filtered_lakes['Lon'].mean()], zoom_start=7)
-marker_cluster = MarkerCluster().add_to(m)
-
-# Add markers for lakes
-for _, row in filtered_lakes.iterrows():
-    folium.Marker(
-        location=[row['Lat'], row['Lon']],
-        popup=f"Lake ID: {row['Lake_id']}",
-        icon=folium.Icon(color='green')
-    ).add_to(marker_cluster)
-
-# Display folium map
-st_folium(m, width=700, height=500)
-
-
+        st.download_button(
+            label="Download Selected Lake IDs as CSV",
+            data=csv_data,
+            file_name="selected_lake_ids.csv",
+            mime="text/csv"
+        )
+    else:
+        st.warning("Please select at least one Lake ID.")
