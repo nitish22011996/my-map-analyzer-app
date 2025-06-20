@@ -19,7 +19,7 @@ def load_lake_data():
 
 @st.cache_data
 def load_mapping_data():
-    return pd.read_csv("state_district_lake.csv")  # Must contain State, District, Lake, Lake_ID
+    return pd.read_csv("HDI_lake_district.csv")  # Must contain State, District, Lake, Lake_ID
 
 lake_df = load_lake_data()
 mapping_df = load_mapping_data()
