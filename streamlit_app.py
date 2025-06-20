@@ -15,11 +15,17 @@ from scipy.stats import linregress
 # Page setup
 st.set_page_config(layout="wide")
 
-# Custom CSS to fix input box width
+# Custom CSS to fix input box width and reduce padding
 st.markdown("""
 <style>
     .stTextInput input {
         width: 100% !important;
+    }
+    .main .block-container {
+        padding-top: 0rem;
+        padding-bottom: 0rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -47,8 +53,8 @@ health_df = load_health()
 if "selected_lake_ids" not in st.session_state:
     st.session_state.selected_lake_ids = []
 
-# --- Layout: Three Columns ---
-col1, col2, col3 = st.columns([1.3, 1.7, 2.5])
+# --- Layout: Three Equal Columns ---
+col1, col2, col3 = st.columns([1, 1, 2])
 
 # --- Column 1: Lake Selection ---
 with col1:
@@ -106,7 +112,7 @@ with col2:
                 icon=folium.Icon(color='blue')
             ).add_to(marker_cluster)
 
-        st_folium(m, width=500, height=500)
+        st_folium(m, width=700, height=500)
 
 # --- Column 3: Lake Health Dashboard ---
 with col3:
@@ -176,8 +182,9 @@ with col3:
                 return combined.reset_index()
 
             result_df = calculate_lake_health_score(selected_df)
-            st.dataframe(result_df[['Lake', 'Health Score', 'Rank']])
-def generate_metric_plots(df, lake_ids, metrics):
+            st.dataframe(result_df[['Lake', 'Health Score', 'Rank']], use_container_width=True)
+
+            def generate_metric_plots(df, lake_ids, metrics):
                 images = []
                 for metric in metrics:
                     plt.figure(figsize=(10, 6), dpi=150)
@@ -252,4 +259,4 @@ def generate_metric_plots(df, lake_ids, metrics):
 
             st.subheader("Download PDF Report")
             pdf = generate_pdf_report(selected_df, result_df, lake_ids)
-            st.download_button("\ud83d\udcc4 Download PDF Report", data=pdf, file_name="lake_health_report.pdf", mime="application/pdf")
+            st.download_button("📄 Download PDF Report", data=pdf, file_name="lake_health_report.pdf", mime="application/pdf")
