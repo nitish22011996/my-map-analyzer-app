@@ -123,11 +123,14 @@ def calculate_lake_health_score(df):
     def get_slope(x, y): return linregress(x, y)[0]
     def get_pval(x, y): return linregress(x, y)[3]
 
-    trends = df.groupby('Lake').apply(lambda x: pd.Series({
-        f"{col} Trend": get_slope(x['Year'], x[col]),
-        f"{col} PValue": get_pval(x['Year'], x[col])
-        for col in ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']
-    })).reset_index()
+    def compute_trends(group):
+        result = {}
+        for col in ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']:
+            result[f"{col} Trend"] = get_slope(group['Year'], group[col])
+            result[f"{col} PValue"] = get_pval(group['Year'], group[col])
+        return pd.Series(result)
+    
+    trends = df.groupby('Lake').apply(compute_trends).reset_index()
 
     for col in trends.columns:
         if 'Trend' in col:
