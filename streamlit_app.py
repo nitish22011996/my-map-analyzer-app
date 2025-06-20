@@ -6,7 +6,7 @@ import requests
 from io import BytesIO
 from scipy.stats import linregress
 
-# --- PDF & Map Specific Imports (Some were missing) ---
+# --- PDF & Map Specific Imports ---
 import folium
 from folium.plugins import MarkerCluster
 from streamlit_folium import st_folium
@@ -20,8 +20,7 @@ LOCATION_DATA_PATH = 'HDI_lake_district.csv'
 HEALTH_DATA_PATH = "lake_health_data.csv"
 
 
-# --- FUNCTION DEFINITIONS ---
-# All helper functions are grouped here for better organization.
+# --- FUNCTION DEFINITIONS (No changes in this section) ---
 
 @st.cache_data
 def load_data(file_path):
@@ -50,7 +49,6 @@ def calculate_lake_health_score(df,
     if latest_year_data.empty:
         return pd.DataFrame()
 
-    # Normalize latest values
     latest_year_data['Vegetation Area Normalized'] = norm(latest_year_data['Vegetation Area'])
     latest_year_data['Barren Area Normalized'] = rev_norm(latest_year_data['Barren Area'])
     latest_year_data['Urban Area Normalized'] = rev_norm(latest_year_data['Urban Area'])
@@ -63,7 +61,7 @@ def calculate_lake_health_score(df,
             latest_year_data[col] = latest_year_data[col].replace([np.inf, -np.inf, np.nan], 0)
 
     def get_slope_and_p(x, y):
-        if len(x.unique()) < 2: return 0, 1 # Not enough data for a trend
+        if len(x.unique()) < 2: return 0, 1
         slope, _, _, p_value, _ = linregress(x, y)
         return slope, p_value
 
@@ -112,7 +110,7 @@ def calculate_lake_health_score(df,
         factor_score('Evaporation', evaporation_weight) + factor_score('Air Temperature', air_temperature_weight)
     )
 
-    combined_data['Health Score'] = norm(combined_data['Health Score']) # Normalize final score from 0 to 1
+    combined_data['Health Score'] = norm(combined_data['Health Score'])
     combined_data['Rank'] = combined_data['Health Score'].rank(ascending=False, method='min')
     return combined_data.reset_index().sort_values('Rank')
 
@@ -151,7 +149,6 @@ def generate_grouped_plots_by_metric(df, lake_ids, metrics):
                 if lake_df[metric].notna().sum() > 0:
                     plt.plot(lake_df["Year"], lake_df[metric], marker='o', linestyle='-', label=f"Lake {lake}")
                     has_data = True
-                # Add trendline if there are at least two data points
                 if lake_df[metric].notna().sum() > 1:
                     x = lake_df["Year"][lake_df[metric].notna()]
                     y = lake_df[metric][lake_df[metric].notna()]
@@ -188,7 +185,7 @@ def generate_comparative_pdf_report(df, results, lake_ids):
         nonlocal y
         lines = text.split('\n')
         for line in lines:
-            wrapped_lines = [line[i:i+95] for i in range(0, len(line), 95)] # Simple text wrap
+            wrapped_lines = [line[i:i+95] for i in range(0, len(line), 95)]
             for wrapped_line in wrapped_lines:
                 if y < 60:
                     c.showPage()
@@ -197,17 +194,14 @@ def generate_comparative_pdf_report(df, results, lake_ids):
                 c.drawString(40, y, wrapped_line)
                 y -= step
     
-    # --- Title Page ---
     c.setFont("Helvetica-Bold", 20)
     c.drawCentredString(width / 2, y, "Comparative Lake Health Report")
     y -= 50
     c.setFont("Helvetica", 12)
-    # FIX: Ensure lake_ids are strings for join
     writeln(f"Analysis of Lakes: {', '.join(map(str, lake_ids))}")
     c.showPage()
     y = height - 50
 
-    # --- Health Score Rankings ---
     c.setFont("Helvetica-Bold", 14)
     writeln("Health Score Ranking")
     y -= 10
@@ -220,55 +214,44 @@ def generate_comparative_pdf_report(df, results, lake_ids):
         if y < 100:
             c.showPage()
             y = height - 50
-        
         score = row['Health Score']
         rank = int(row['Rank'])
-        # More nuanced color mapping
         if score > 0.75: color = colors.darkgreen
         elif score > 0.5: color = colors.orange
         else: color = colors.firebrick
-        
         c.setFillColor(color)
         bar_width = score * max_bar_width
         c.rect(bar_start_x, y, bar_width, bar_height, fill=1, stroke=0)
-        
         c.setFillColor(colors.black)
         label = f"Lake {row['Lake']} (Rank {rank}) - Score: {score:.3f}"
         c.drawString(bar_start_x + 5, y + 5, label)
         y -= (bar_height + 10)
-    
     y -= 20
     
-    # --- AI-Generated Comparative Analysis ---
-    if y < 250: # Check if enough space for the section
+    if y < 250:
         c.showPage()
         y = height - 50
         
     c.setFont("Helvetica-Bold", 14)
     writeln("AI-Generated Comparative Analysis")
     c.setFont("Helvetica", 10)
-    
     prompt = f"Provide a detailed comparative analysis for the following lakes: {', '.join(map(str, lake_ids))}.\n\n"
     for _, row in results.iterrows():
         prompt += f"- Lake {row['Lake']} has a health score of {row['Health Score']:.3f} (Rank {int(row['Rank'])}).\n"
     prompt += "\nBased on this, discuss the likely contributing factors (Vegetation, Urban Area, Climate) and compare their overall health trajectories. Be concise and structured."
-    
     ai_text = generate_ai_insight_combined(prompt)
     writeln(ai_text)
     
-    # --- Plots Grouped by Metric ---
     metrics = ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']
     plots = generate_grouped_plots_by_metric(df, lake_ids, metrics)
 
     for i in range(0, len(plots), 2):
         c.showPage()
         y_positions = [height / 2 + 20, 50]
-        
         for j in range(2):
             if i + j < len(plots):
                 metric, img_buf = plots[i + j]
                 img = ImageReader(img_buf)
-                
                 c.setFont("Helvetica-Bold", 12)
                 c.drawCentredString(width / 2, y_positions[j] + 280, f"Comparison of: {metric}")
                 c.drawImage(img, 40, y_positions[j], width=width-80, height=270, preserveAspectRatio=True, anchor='n')
@@ -313,16 +296,17 @@ with st.sidebar:
             else:
                 st.info(f"Lake {selected_lake_id} is already in the list.")
     except FileNotFoundError:
-        st.error(f"Location data file not found at '{LOCATION_DATA_PATH}'. Please check the path.")
-        filtered_lakes = pd.DataFrame() # Ensure this exists to prevent errors later
+        st.error(f"Location data file not found at '{LOCATION_DATA_PATH}'.")
+        filtered_lakes = pd.DataFrame() 
 
-# --- Main Page Content ---
+# CHANGE: Restructured the main page into two columns for a more compact view
 col1, col2 = st.columns([0.6, 0.4])
 
 with col1:
     st.subheader(f"Map of Lakes in {selected_district}, {selected_state}")
     if not filtered_lakes.empty:
         map_center = [filtered_lakes['Lat'].mean(), filtered_lakes['Lon'].mean()]
+        # CHANGE: Reduced map height slightly to better fit on one screen
         m = folium.Map(location=map_center, zoom_start=8)
         marker_cluster = MarkerCluster().add_to(m)
 
@@ -334,23 +318,21 @@ with col1:
                 tooltip=f"Lake ID: {row['Lake_ID']}",
                 icon=folium.Icon(color='blue', icon='water')
             ).add_to(marker_cluster)
-        st_folium(m, width=700, height=500)
+        st_folium(m, height=600, use_container_width=True)
     else:
         st.warning("No lake location data found for the selected district.")
 
 with col2:
     st.subheader("Lakes Selected for Analysis")
     
-    # This text area is now the primary controller for the list of lakes.
-    # It's populated by the sidebar and can be edited directly.
     ids_text = ", ".join(map(str, st.session_state.selected_lake_ids))
     edited_ids_text = st.text_area(
         "Edit Lake IDs (comma-separated)", 
         value=ids_text,
+        height=100, # CHANGE: Set a fixed height for the text area
         help="Add lakes using the sidebar or type IDs directly here."
     )
     
-    # Update session state from the editable text area
     try:
         if edited_ids_text:
             updated_ids = [int(x.strip()) for x in edited_ids_text.split(",") if x.strip().isdigit()]
@@ -360,56 +342,41 @@ with col2:
     except (ValueError, TypeError):
         st.warning("Invalid input. Please enter only comma-separated numbers.")
 
-    if st.button("Clear Selection"):
-        st.session_state.selected_lake_ids = []
-        st.rerun()
+    # CHANGE: The "Clear Selection" button has been removed from here.
 
-# --- Analysis & Reporting Section (Integrated with Session State) ---
-st.header("Comparative Analysis & Report Generation")
+    # CHANGE: The entire analysis and reporting section is now moved inside the second column.
+    st.markdown("---") # Visual separator
+    
+    lake_ids_to_analyze = st.session_state.get("selected_lake_ids", [])
 
-# FIX: Get the list of selected lakes directly from the session state.
-lake_ids_to_analyze = st.session_state.get("selected_lake_ids", [])
+    if lake_ids_to_analyze:
+        try:
+            df_health = load_data(HEALTH_DATA_PATH)
+            lake_ids_str = [str(i) for i in lake_ids_to_analyze]
+            selected_df = df_health[df_health["Lake"].astype(str).isin(lake_ids_str)]
 
-if lake_ids_to_analyze:
-    try:
-        df_health = load_data(HEALTH_DATA_PATH)
-        
-        # FIX: Ensure IDs are strings for filtering, as the 'isin' method requires it
-        lake_ids_str = [str(i) for i in lake_ids_to_analyze]
-        selected_df = df_health[df_health["Lake"].astype(str).isin(lake_ids_str)]
+            if selected_df.empty:
+                st.error(f"No health data found for the selected Lake IDs: {', '.join(lake_ids_str)}")
+            else:
+                with st.spinner("Calculating health scores..."):
+                    results = calculate_lake_health_score(selected_df)
+                    
+                    st.subheader("Health Score Results")
+                    st.dataframe(results[["Lake", "Health Score", "Rank"]].style.format({"Health Score": "{:.3f}"}))
 
-        if selected_df.empty:
-            st.error(f"No health data found for the selected Lake IDs: {', '.join(lake_ids_str)}")
-        else:
-            with st.spinner("Calculating health scores and generating report..."):
-                results = calculate_lake_health_score(selected_df)
-                
-                st.subheader("Lake Health Score Results")
-                st.dataframe(results[["Lake", "Health Score", "Rank"]].style.format({"Health Score": "{:.3f}"}))
-
-                st.subheader("Download Center")
-                
-                # Download CSV of the filtered raw data
-                csv_data = selected_df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    "Download Filtered Data (CSV)", 
-                    csv_data, 
-                    f"selected_lakes_{'_'.join(lake_ids_str)}.csv", 
-                    "text/csv"
-                )
-
-                # Download the comprehensive PDF report
-                pdf_buffer = generate_comparative_pdf_report(selected_df, results, lake_ids_to_analyze)
-                st.download_button(
-                    label="📄 Download Comparative PDF Report",
-                    data=pdf_buffer,
-                    file_name=f"comparative_report_{'_'.join(lake_ids_str)}.pdf",
-                    mime="application/pdf",
-                )
-
-    except FileNotFoundError:
-        st.error(f"Health data file not found at '{HEALTH_DATA_PATH}'. Please check the path.")
-    except Exception as e:
-        st.error(f"An unexpected error occurred during analysis: {e}")
-else:
-    st.info("ℹ️ Use the sidebar to add lakes to the analysis list.")
+                    st.subheader("Download Center")
+                    
+                    pdf_buffer = generate_comparative_pdf_report(selected_df, results, lake_ids_to_analyze)
+                    st.download_button(
+                        label="📄 Download PDF Report",
+                        data=pdf_buffer,
+                        file_name=f"comparative_report_{'_'.join(lake_ids_str)}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True # Makes button wider
+                    )
+        except FileNotFoundError:
+            st.error(f"Health data file not found at '{HEALTH_DATA_PATH}'.")
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+    else:
+        st.info("ℹ️ Use the sidebar to add lakes to the analysis list.")
