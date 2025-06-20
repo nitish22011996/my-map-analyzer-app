@@ -19,7 +19,9 @@ def load_lake_data():
 
 @st.cache_data
 def load_mapping_data():
-    return pd.read_csv("HDI_lake_district.csv")  # Must contain State, District, Lake, Lake_ID
+    df = pd.read_csv("HDI_lake_district.csv")
+    df.columns = df.columns.str.strip()  # Clean column names
+    return df
 
 lake_df = load_lake_data()
 mapping_df = load_mapping_data()
@@ -38,9 +40,11 @@ selected_district = st.selectbox("Select District", districts)
 filtered_lakes = mapping_df[(mapping_df['State'] == selected_state) &
                             (mapping_df['District'] == selected_district)]
 lake_options = filtered_lakes[['Lake_ID']].drop_duplicates()
-lake_ids = lake_options['Lake_ID'].astype(str).tolist()
+lake_names = lake_options['Lake_ID'].astype(str).tolist()
+lake_ids_dict = dict(zip(lake_names, lake_names))
 
-selected_lake_ids = st.multiselect("Select Lake ID(s)", lake_ids)
+selected_lakes_by_name = st.multiselect("Select Lake(s)", lake_names)
+selected_lake_ids = [str(lake_ids_dict[name]) for name in selected_lakes_by_name]
 
 # --- Show Preview ---
 st.subheader("Dataset Preview")
@@ -269,4 +273,3 @@ if selected_lake_ids:
             st.warning("No data available for the latest year.")
 else:
     st.info("Please select at least one lake to continue.")
-
