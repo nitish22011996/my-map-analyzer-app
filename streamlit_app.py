@@ -201,15 +201,16 @@ def calculate_lake_health_score(df,
         return slope, p
 
     def extract_trends(x):
-    metrics = ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']
-    data = {}
-    for col in metrics:
-        slope, p = get_slope_and_p(x['Year'], x[col])
-        data[f"{col} Trend"] = slope
-        data[f"{col} PValue"] = p
-    return pd.Series(data)
-
+        metrics = ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']
+        data = {}
+        for col in metrics:
+            slope, p = get_slope_and_p(x['Year'], x[col])
+            data[f"{col} Trend"] = slope
+            data[f"{col} PValue"] = p
+        return pd.Series(data)
+    
     trends = df.groupby('Lake').apply(extract_trends).reset_index()
+
 
 
     for factor, desirable in [
