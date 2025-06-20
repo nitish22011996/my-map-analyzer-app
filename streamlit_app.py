@@ -76,4 +76,4 @@ for _, row in filtered_lakes.iterrows():
         icon=folium.Icon(color='blue')
     ).add_to(marker_cluster)
 
-st_folium(m, width=700, height=500)////
+st_folium(m, width=700, height=500)
