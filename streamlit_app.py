@@ -408,4 +408,4 @@ with col2:
                 use_container_width=True
             )
     else:
-        st.info("ℹ️ Add lakes to the list above and click 'Analyze Selected Lakes'.")t above and click 'Analyze Selected Lakes'.")
+        st.info("ℹ️ Add lakes to the list above and click 'Analyze Selected Lakes'.")
