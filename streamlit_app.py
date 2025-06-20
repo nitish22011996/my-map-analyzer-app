@@ -208,10 +208,8 @@ def calculate_lake_health_score(df,
             data[f"{col} Trend"] = slope
             data[f"{col} PValue"] = p
         return pd.Series(data)
-    
+
     trends = df.groupby('Lake').apply(extract_trends).reset_index()
-
-
 
     for factor, desirable in [
         ('Vegetation Area', 'positive'),
@@ -264,7 +262,7 @@ if selected_lake_ids:
 
             pdf_buffer = generate_comparative_pdf_report(selected_df, results, selected_lake_ids)
             st.download_button(
-                label="\ud83d\udcc4 Download Combined Lake Health Report",
+                label="📄 Download Combined Lake Health Report",
                 data=pdf_buffer,
                 file_name="combined_lake_health_report.pdf",
                 mime="application/pdf"
