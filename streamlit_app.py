@@ -1,4 +1,4 @@
-# Full Streamlit App: Lake Health with Hierarchical Selection, Health Scores, Plots, PDF, and AI Analysis
+# Full Streamlit App: Lake Health with Map, Flexible Lake ID Input, Health Scores, Plots, PDF, and AI Analysis
 
 import streamlit as st
 import pandas as pd
@@ -11,6 +11,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from reportlab.lib import colors
 from scipy.stats import linregress
+import folium
+from streamlit_folium import st_folium
 
 # --- Load Data ---
 @st.cache_data
@@ -26,25 +28,28 @@ def load_mapping_data():
 lake_df = load_lake_data()
 mapping_df = load_mapping_data()
 
-# --- UI: Hierarchical Selection ---
+# --- UI: Title and Map ---
 st.title("Lake Health Score Dashboard")
-st.subheader("Step 1: Select Lakes by Region")
+st.subheader("Step 1: Explore Lakes on Map")
 
-states = sorted(mapping_df['State'].dropna().unique())
-selected_state = st.selectbox("Select State", states)
+m = folium.Map(location=[mapping_df["Lat"].mean(), mapping_df["Lon"].mean()], zoom_start=5)
+for _, row in mapping_df.iterrows():
+    folium.Marker(
+        location=[row["Lat"], row["Lon"]],
+        popup=f"Lake ID: {row['Lake_ID']}, District: {row['District']}, State: {row['State']}",
+        tooltip=f"Lake ID: {row['Lake_ID']}"
+    ).add_to(m)
 
-filtered_districts = mapping_df[mapping_df['State'] == selected_state]
-districts = sorted(filtered_districts['District'].dropna().unique())
-selected_district = st.selectbox("Select District", districts)
+st_data = st_folium(m, width=700, height=500)
 
-filtered_lakes = mapping_df[(mapping_df['State'] == selected_state) &
-                            (mapping_df['District'] == selected_district)]
-lake_options = filtered_lakes[['Lake_ID']].drop_duplicates()
-lake_names = lake_options['Lake_ID'].astype(str).tolist()
-lake_ids_dict = dict(zip(lake_names, lake_names))
+# --- Lake Selection Section ---
+st.subheader("Step 2: Enter Lake ID(s) to Analyze")
+lake_input = st.text_input("Enter Lake ID(s) separated by commas", "")
+submit = st.button("Submit")
 
-selected_lakes_by_name = st.multiselect("Select Lake(s)", lake_names)
-selected_lake_ids = [str(lake_ids_dict[name]) for name in selected_lakes_by_name]
+selected_lake_ids = []
+if submit and lake_input:
+    selected_lake_ids = [id.strip() for id in lake_input.split(",") if id.strip()]
 
 # --- Show Preview ---
 st.subheader("Dataset Preview")
@@ -53,7 +58,6 @@ st.dataframe(lake_df.head())
 # --- AI Insight Generation Function ---
 def generate_ai_insight_combined(prompt):
     API_KEY = st.secrets["OPENROUTER_API_KEY"]
-    API_URL = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
@@ -63,7 +67,7 @@ def generate_ai_insight_combined(prompt):
         "messages": [{"role": "user", "content": prompt}]
     }
     try:
-        response = requests.post(API_URL, json=data, headers=headers, timeout=15)
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", json=data, headers=headers, timeout=15)
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"]
         else:
@@ -71,7 +75,7 @@ def generate_ai_insight_combined(prompt):
     except Exception as e:
         return f"AI generation error: {str(e)}"
 
-# --- Grouped Plot Generation ---
+# --- Plotting Function ---
 def generate_grouped_plots_by_metric(df, lake_ids, metrics):
     grouped_images = []
     for metric in metrics:
@@ -102,7 +106,7 @@ def generate_grouped_plots_by_metric(df, lake_ids, metrics):
         grouped_images.append((metric, buf))
     return grouped_images
 
-# --- PDF Generation ---
+# --- PDF Report Generation ---
 def generate_comparative_pdf_report(df, results, lake_ids):
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -151,15 +155,16 @@ def generate_comparative_pdf_report(df, results, lake_ids):
             c.showPage()
             y = height - 50
 
+    # AI Insights
     prompt = "Compare lakes: " + ", ".join(lake_ids) + " based on their health scores and metric trends."
     for _, row in results.iterrows():
         prompt += f"\nLake {row['Lake']}: Score={row['Health Score']:.2f}, Rank={int(row['Rank'])}"
     ai_text = generate_ai_insight_combined(prompt)
-
     writeln("AI-Generated Comparative Analysis:\n" + "-"*40)
     writeln(ai_text)
     c.showPage()
 
+    # Plots
     metrics = ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']
     plots = generate_grouped_plots_by_metric(df, lake_ids, metrics)
 
@@ -177,7 +182,7 @@ def generate_comparative_pdf_report(df, results, lake_ids):
     buffer.seek(0)
     return buffer
 
-# --- Health Score Calculation Function ---
+# --- Health Score Calculation ---
 def calculate_lake_health_score(df,
                                 vegetation_weight=1/6, barren_weight=1/6, urban_weight=1/6,
                                 precipitation_weight=1/6, evaporation_weight=1/6, air_temperature_weight=1/6):
@@ -272,4 +277,4 @@ if selected_lake_ids:
         else:
             st.warning("No data available for the latest year.")
 else:
-    st.info("Please select at least one lake to continue.")
+    st.info("Please enter and submit lake IDs to continue.")
