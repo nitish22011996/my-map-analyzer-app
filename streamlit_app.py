@@ -53,11 +53,6 @@ try:
 except:
     st.warning("Invalid input. Please enter comma-separated numbers.")
 
-# Clear button
-if st.button("Clear Selection"):
-    st.session_state.selected_lake_ids = []
-    st.experimental_rerun()
-
 # Map of lakes in selected district
 st.subheader(f"Lakes in {selected_district}, {selected_state}")
 if not filtered_lakes.empty:
