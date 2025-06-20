@@ -53,6 +53,9 @@ health_df = load_health()
 if "selected_lake_ids" not in st.session_state:
     st.session_state.selected_lake_ids = []
 
+if "manual_lake_input" not in st.session_state:
+    st.session_state.manual_lake_input = ""
+
 # --- Layout: Three Equal Columns ---
 col1, col2, col3 = st.columns([1, 1, 2])
 
@@ -75,9 +78,11 @@ with col1:
         if st.button("Submit Selection"):
             if selected_lake_id not in st.session_state.selected_lake_ids:
                 st.session_state.selected_lake_ids.append(int(selected_lake_id))
+            # Set manual input field as selected
+            st.session_state.manual_lake_input = str(selected_lake_id)
 
-    manual_ids = st.text_input("Enter Lake IDs (comma-separated)")
-    if manual_ids:
+    manual_ids = st.text_input("Enter Lake IDs (comma-separated)", value=st.session_state.manual_lake_input, key="manual_input")
+    if st.button("Analyze Lake Health"):
         try:
             ids = [int(x.strip()) for x in manual_ids.split(',') if x.strip().isdigit()]
             st.session_state.selected_lake_ids.extend([x for x in ids if x not in st.session_state.selected_lake_ids])
@@ -91,10 +96,6 @@ with col1:
     st.subheader("Selected Lake IDs")
     if st.session_state.selected_lake_ids:
         st.write(", ".join(map(str, st.session_state.selected_lake_ids)))
-        csv_data = pd.DataFrame({'Lake_id': st.session_state.selected_lake_ids})
-        csv_buffer = BytesIO()
-        csv_data.to_csv(csv_buffer, index=False)
-        st.download_button("Download Selected Lake IDs as CSV", data=csv_buffer.getvalue(), file_name='selected_lake_ids.csv', mime='text/csv')
     else:
         st.write("No lake IDs selected yet.")
 
