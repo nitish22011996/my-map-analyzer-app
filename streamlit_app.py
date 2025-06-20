@@ -45,10 +45,13 @@ if st.sidebar.button("Submit"):
 # Display selected lake IDs
 st.subheader("Selected Lake IDs")
 if st.session_state.selected_lake_ids:
-    st.write(st.session_state.selected_lake_ids)
+    formatted_ids = ", ".join(str(lid) for lid in st.session_state.selected_lake_ids)
+    st.write(formatted_ids)
 else:
     st.write("No lake IDs selected yet.")
-
+if st.button("Clear Selection"):
+    st.session_state.selected_lake_ids = []
+    st.experimental_rerun()
 # Button to download selected lake IDs
 if st.session_state.selected_lake_ids:
     csv_data = pd.DataFrame({'Lake_id': st.session_state.selected_lake_ids})
