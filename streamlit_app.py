@@ -20,7 +20,7 @@ LOCATION_DATA_PATH = 'HDI_lake_district.csv'
 HEALTH_DATA_PATH = "lake_health_data.csv"
 
 
-# --- FUNCTION DEFINITIONS (No changes in this section) ---
+# --- FUNCTION DEFINITIONS ---
 
 @st.cache_data
 def load_data(file_path):
@@ -298,6 +298,8 @@ with st.sidebar:
                 st.info(f"Lake {selected_lake_id} is already in the list.")
             # Clear previous results when the list is modified
             st.session_state.analysis_results = None 
+            st.session_state.pdf_buffer = None
+            st.session_state.selected_df_for_download = None
 
     except FileNotFoundError:
         st.error(f"Location data file not found at '{LOCATION_DATA_PATH}'.")
@@ -341,9 +343,10 @@ with col2:
         else:
             updated_ids = []
         
-        # If the list has changed, clear old results
         if updated_ids != st.session_state.selected_lake_ids:
             st.session_state.analysis_results = None
+            st.session_state.pdf_buffer = None
+            st.session_state.selected_df_for_download = None
         
         st.session_state.selected_lake_ids = updated_ids
     except (ValueError, TypeError):
@@ -351,7 +354,6 @@ with col2:
 
     lake_ids_to_analyze = st.session_state.get("selected_lake_ids", [])
     
-    # --- CHANGE: Add the "Analyze" button ---
     if st.button("Analyze Selected Lakes", disabled=not lake_ids_to_analyze, use_container_width=True):
         with st.spinner("Analyzing..."):
             try:
@@ -361,44 +363,49 @@ with col2:
 
                 if selected_df.empty:
                     st.error(f"No health data found for the selected Lake IDs: {', '.join(lake_ids_str)}")
-                    st.session_state.analysis_results = None # Clear results on error
+                    st.session_state.analysis_results = None
+                    st.session_state.pdf_buffer = None
+                    st.session_state.selected_df_for_download = None
                 else:
-                    # Calculate and store all results in the session state
-                    st.session_state.analysis_results = calculate_lake_health_score(selected_df)
+                    results = calculate_lake_health_score(selected_df)
+                    st.session_state.analysis_results = results
                     st.session_state.selected_df_for_download = selected_df
-                    st.session_state.pdf_buffer = generate_comparative_pdf_report(selected_df, st.session_state.analysis_results, lake_ids_to_analyze)
+                    st.session_state.pdf_buffer = generate_comparative_pdf_report(selected_df, results, lake_ids_to_analyze)
 
             except FileNotFoundError:
                 st.error(f"Health data file not found at '{HEALTH_DATA_PATH}'.")
             except Exception as e:
-                st.error(f"An error occurred: {e}")
+                st.error(f"An error occurred during analysis: {e}")
+                # Clear results on any generic error during processing
+                st.session_state.analysis_results = None
+                st.session_state.pdf_buffer = None
+                st.session_state.selected_df_for_download = None
 
-    st.markdown("---") # Visual separator
+    st.markdown("---") 
 
-    # --- CHANGE: Display results only if they exist in the session state ---
     if st.session_state.analysis_results is not None and not st.session_state.analysis_results.empty:
         st.subheader("Health Score Results")
         st.dataframe(st.session_state.analysis_results[["Lake", "Health Score", "Rank"]].style.format({"Health Score": "{:.3f}"}))
 
         st.subheader("Download Center")
         
-        # --- CHANGE: Restore the CSV Download button ---
-        csv_data = st.session_state.selected_df_for_download.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Filtered Data (CSV)",
-            data=csv_data,
-            file_name=f"filtered_data_{'_'.join(map(str, lake_ids_to_analyze))}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+        if st.session_state.selected_df_for_download is not None:
+            csv_data = st.session_state.selected_df_for_download.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Filtered Data (CSV)",
+                data=csv_data,
+                file_name=f"filtered_data_{'_'.join(map(str, lake_ids_to_analyze))}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
 
-        st.download_button(
-            label="📄 Download PDF Report",
-            data=st.session_state.pdf_buffer,
-            file_name=f"comparative_report_{'_'.join(map(str, lake_ids_to_analyze))}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+        if st.session_state.pdf_buffer is not None:
+            st.download_button(
+                label="📄 Download PDF Report",
+                data=st.session_state.pdf_buffer,
+                file_name=f"comparative_report_{'_'.join(map(str, lake_ids_to_analyze))}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
     else:
-        # Show this message if no analysis has been run yet
-        st.info("ℹ️ Add lakes to the list above and click 'Analyze Selected Lakes'.")
+        st.info("ℹ️ Add lakes to the list above and click 'Analyze Selected Lakes'.")t above and click 'Analyze Selected Lakes'.")
