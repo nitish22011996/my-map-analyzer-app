@@ -19,103 +19,126 @@ from reportlab.lib import colors
 LOCATION_DATA_PATH = 'HDI_lake_district.csv'
 HEALTH_DATA_PATH = "lake_health_data.csv"
 
+# --- PARAMETER DICTIONARY ---
+# This dictionary centralizes the logic for each parameter, making the code cleaner.
+PARAMETER_PROPERTIES = {
+    'Air Temperature': {'impact': 'negative', 'type': 'climate'},
+    'Evaporation': {'impact': 'negative', 'type': 'climate'},
+    'Precipitation': {'impact': 'positive', 'type': 'climate'},
+    'Lake Water Surface Temperature': {'impact': 'negative', 'type': 'water_quality'},
+    'Water Clarity': {'impact': 'positive', 'type': 'water_quality'},
+    'Vegetation Area': {'impact': 'positive', 'type': 'land_cover'},
+    'Barren Area': {'impact': 'negative', 'type': 'land_cover'},
+    'Urban Area': {'impact': 'negative', 'type': 'land_cover'},
+    'HDI': {'impact': 'positive', 'type': 'socioeconomic'} # HDI has no trend analysis
+}
+LAND_COVER_PARAMS = [p for p, props in PARAMETER_PROPERTIES.items() if props['type'] == 'land_cover']
+ALL_AVAILABLE_PARAMS = list(PARAMETER_PROPERTIES.keys())
+
 
 # --- FUNCTION DEFINITIONS ---
 
 @st.cache_data
-def load_data(file_path):
-    """Loads a CSV file into a pandas DataFrame with caching."""
-    return pd.read_csv(file_path)
-
-def calculate_lake_health_score(df,
-                                vegetation_weight=1/6, barren_weight=1/6, urban_weight=1/6,
-                                precipitation_weight=1/6, evaporation_weight=1/6, air_temperature_weight=1/6):
+def prepare_all_data(health_path, location_path):
     """
-    Calculates a health score for lakes based on latest values and historical trends.
+    Loads both health and location/HDI CSVs, standardizes column names, 
+    and merges them into a single, analysis-ready DataFrame.
     """
-    def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0
-    def rev_norm(x): return 1 - norm(x)
+    try:
+        df_health = pd.read_csv(health_path)
+        df_location = pd.read_csv(location_path)
+    except FileNotFoundError as e:
+        st.error(f"Data file not found: {e}. Please ensure '{health_path}' and '{location_path}' are in the correct directory.")
+        return None, None
 
-    required_columns = ['Lake', 'Year', 'Vegetation Area', 'Barren Area', 'Urban Area',
-                        'Precipitation', 'Evaporation', 'Air Temperature']
-    for col in required_columns:
-        if col not in df.columns:
-            raise ValueError(f"Missing required column in health data: {col}")
+    # Standardize column names for easier programmatic access
+    health_col_map = {
+        'Lake_id': 'Lake_ID',
+        'Year': 'Year',
+        'Air_Temperature': 'Air Temperature',
+        'Evaporation': 'Evaporation',
+        'Precipitation': 'Precipitation',
+        'Barren': 'Barren Area',
+        'Urban and Built-up': 'Urban Area',
+        'Vegetation': 'Vegetation Area',
+        'Lake_Water_Surface_Temperature': 'Lake Water Surface Temperature',
+        'Water_Clarity(FUI)': 'Water Clarity'
+    }
+    df_health = df_health.rename(columns=health_col_map)
+    
+    # Ensure Lake_ID is the same data type for merging
+    df_health['Lake_ID'] = pd.to_numeric(df_health['Lake_ID'], errors='coerce').dropna().astype(int)
+    df_location['Lake_ID'] = pd.to_numeric(df_location['Lake_ID'], errors='coerce').dropna().astype(int)
+    
+    # Select only the necessary columns from the location file for merging
+    location_subset = df_location[['Lake_ID', 'HDI']].copy()
 
-    for col in ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    # Merge the two dataframes
+    df_merged = pd.merge(df_health, location_subset, on='Lake_ID', how='left')
+    
+    return df_merged, df_location
 
-    latest_year_data = df[df['Year'] == df['Year'].max()].copy()
-    if latest_year_data.empty:
+
+def calculate_lake_health_score(df, selected_parameters):
+    """
+    Calculates a health score based on a DYNAMIC list of user-selected parameters
+    and a hierarchical weighting system.
+    """
+    if not selected_parameters:
         return pd.DataFrame()
 
-    latest_year_data['Vegetation Area Normalized'] = norm(latest_year_data['Vegetation Area'])
-    latest_year_data['Barren Area Normalized'] = rev_norm(latest_year_data['Barren Area'])
-    latest_year_data['Urban Area Normalized'] = rev_norm(latest_year_data['Urban Area'])
-    latest_year_data['Precipitation Normalized'] = norm(latest_year_data['Precipitation'])
-    latest_year_data['Evaporation Normalized'] = rev_norm(latest_year_data['Evaporation'])
-    latest_year_data['Air Temperature Normalized'] = rev_norm(latest_year_data['Air Temperature'])
+    def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.0
+    def rev_norm(x): return 1.0 - norm(x)
 
-    for col in latest_year_data.columns:
-        if 'Normalized' in col:
-            latest_year_data[col] = latest_year_data[col].replace([np.inf, -np.inf, np.nan], 0)
+    # --- 1. Hierarchical Weighting Calculation ---
+    selected_land_cover = [p for p in selected_parameters if p in LAND_COVER_PARAMS]
+    selected_other_params = [p for p in selected_parameters if p not in LAND_COVER_PARAMS]
+    
+    num_main_groups = len(selected_other_params) + (1 if selected_land_cover else 0)
+    w_main = 1.0 / num_main_groups if num_main_groups > 0 else 0.0
+    
+    num_land_cover_items = len(selected_land_cover)
+    w_sub_landcover = 1.0 / num_land_cover_items if num_land_cover_items > 0 else 0.0
 
-    def get_slope_and_p(x, y):
-        if len(x.unique()) < 2: return 0, 1
-        slope, _, _, p_value, _ = linregress(x, y)
-        return slope, p_value
+    # --- 2. Calculate Factor Scores ---
+    latest_year_data = df.loc[df.groupby('Lake_ID')['Year'].idxmax()].copy().set_index('Lake_ID')
+    total_score = pd.Series(0.0, index=latest_year_data.index)
 
-    trends = df.groupby('Lake').apply(lambda x: pd.Series({
-        'Vegetation Area Trend': get_slope_and_p(x['Year'], x['Vegetation Area'])[0],
-        'Vegetation Area PValue': get_slope_and_p(x['Year'], x['Vegetation Area'])[1],
-        'Barren Area Trend': get_slope_and_p(x['Year'], x['Barren Area'])[0],
-        'Barren Area PValue': get_slope_and_p(x['Year'], x['Barren Area'])[1],
-        'Urban Area Trend': get_slope_and_p(x['Year'], x['Urban Area'])[0],
-        'Urban Area PValue': get_slope_and_p(x['Year'], x['Urban Area'])[1],
-        'Precipitation Trend': get_slope_and_p(x['Year'], x['Precipitation'])[0],
-        'Precipitation PValue': get_slope_and_p(x['Year'], x['Precipitation'])[1],
-        'Evaporation Trend': get_slope_and_p(x['Year'], x['Evaporation'])[0],
-        'Evaporation PValue': get_slope_and_p(x['Year'], x['Evaporation'])[1],
-        'Air Temperature Trend': get_slope_and_p(x['Year'], x['Air Temperature'])[0],
-        'Air Temperature PValue': get_slope_and_p(x['Year'], x['Air Temperature'])[1],
-    })).reset_index()
+    for param in selected_parameters:
+        props = PARAMETER_PROPERTIES[param]
+        df[param] = pd.to_numeric(df[param], errors='coerce').fillna(0)
+        
+        # Present Value Score
+        latest_values = latest_year_data[param]
+        present_value_score = norm(latest_values) if props['impact'] == 'positive' else rev_norm(latest_values)
+        
+        # Trend Score (if applicable)
+        if param == 'HDI':
+            factor_score = present_value_score # HDI's score is only its present value
+        else:
+            trends = df.groupby('Lake_ID').apply(lambda x: linregress(x['Year'], x[param]) if len(x['Year'].unique()) > 1 else (0,0,0,1,0))
+            slopes = trends.apply(lambda x: x.slope)
+            p_values = trends.apply(lambda x: x.pvalue)
 
-    for factor, desirable in [
-        ('Vegetation Area', 'positive'), ('Barren Area', 'negative'), ('Urban Area', 'negative'),
-        ('Precipitation', 'positive'), ('Evaporation', 'negative'), ('Air Temperature', 'negative')
-    ]:
-        slope_col = f"{factor} Trend"
-        pval_col = f"{factor} PValue"
-        trends[f"{slope_col} Normalized"] = norm(trends[slope_col]) if desirable == 'positive' else rev_norm(trends[slope_col])
-        trends[f"{pval_col} Normalized"] = 1 - norm(trends[pval_col])
+            slope_norm = norm(slopes) if props['impact'] == 'positive' else rev_norm(slopes)
+            p_value_norm = 1.0 - norm(p_values)
+            
+            factor_score = (present_value_score + slope_norm + p_value_norm) / 3.0
+        
+        # Apply Weights and Add to Total Score
+        final_weight = w_main * w_sub_landcover if param in LAND_COVER_PARAMS else w_main
+        total_score += final_weight * factor_score
 
-    for col in trends.columns:
-        if 'Normalized' in col:
-            trends[col] = trends[col].replace([np.inf, -np.inf, np.nan], 0)
-
-    latest_year_data = latest_year_data.set_index('Lake')
-    trends = trends.set_index('Lake')
-    combined_data = latest_year_data.join(trends, how='inner')
-
-    def factor_score(factor, weight):
-        return weight * (
-            (combined_data[f'{factor} Normalized'] +
-             combined_data[f'{factor} Trend Normalized'] +
-             combined_data[f'{factor} PValue Normalized']) / 3
-        )
-
-    combined_data['Health Score'] = (
-        factor_score('Vegetation Area', vegetation_weight) + factor_score('Barren Area', barren_weight) +
-        factor_score('Urban Area', urban_weight) + factor_score('Precipitation', precipitation_weight) +
-        factor_score('Evaporation', evaporation_weight) + factor_score('Air Temperature', air_temperature_weight)
-    )
-
-    combined_data['Health Score'] = norm(combined_data['Health Score'])
-    combined_data['Rank'] = combined_data['Health Score'].rank(ascending=False, method='min')
-    return combined_data.reset_index().sort_values('Rank')
+    # --- 3. Finalize and Rank ---
+    latest_year_data['Health Score'] = total_score
+    latest_year_data['Health Score'] = norm(latest_year_data['Health Score']) # Final normalization
+    latest_year_data['Rank'] = latest_year_data['Health Score'].rank(ascending=False, method='min').astype(int)
+    
+    return latest_year_data.reset_index().sort_values('Rank')
 
 
 def generate_ai_insight_combined(prompt):
+    """Generates AI insights using the OpenRouter API."""
     API_KEY = st.secrets.get("OPENROUTER_API_KEY")
     if not API_KEY:
         return "API Key not found. Please set OPENROUTER_API_KEY in Streamlit secrets."
@@ -131,16 +154,17 @@ def generate_ai_insight_combined(prompt):
     except requests.exceptions.RequestException as e:
         return f"Failed to generate insight due to a network error: {e}"
     except (KeyError, IndexError):
-        return "Failed to parse the AI response. The response format may have changed."
+        return "Failed to parse the AI response."
 
 
 def generate_grouped_plots_by_metric(df, lake_ids, metrics):
+    """Generates one plot per metric, comparing all selected lakes."""
     grouped_images = []
     for metric in metrics:
         plt.figure(figsize=(10, 6), dpi=150)
         has_data = False
         for lake in lake_ids:
-            lake_df = df[df['Lake'].astype(str) == str(lake)].copy()
+            lake_df = df[df['Lake_ID'] == lake].copy()
             if not lake_df.empty and metric in lake_df:
                 lake_df = lake_df.sort_values("Year")
                 lake_df[metric] = pd.to_numeric(lake_df[metric], errors='coerce')
@@ -157,7 +181,7 @@ def generate_grouped_plots_by_metric(df, lake_ids, metrics):
             plt.close()
             continue
             
-        plt.title(f"{metric} Over Time for Selected Lakes", fontsize=14)
+        plt.title(f"{metric} Over Time", fontsize=14)
         plt.xlabel("Year", fontsize=12)
         plt.ylabel(metric, fontsize=12)
         plt.legend()
@@ -172,7 +196,8 @@ def generate_grouped_plots_by_metric(df, lake_ids, metrics):
     return grouped_images
 
 
-def generate_comparative_pdf_report(df, results, lake_ids):
+def generate_comparative_pdf_report(df, results, lake_ids, selected_parameters):
+    """Generates a dynamic, multi-page comparative PDF report."""
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -192,192 +217,150 @@ def generate_comparative_pdf_report(df, results, lake_ids):
                 y -= step
     
     c.setFont("Helvetica-Bold", 20)
-    c.drawCentredString(width / 2, y, "Comparative Lake Health Report")
+    c.drawCentredString(width / 2, y, "Dynamic Lake Health Report")
     y -= 50
     c.setFont("Helvetica", 12)
-    writeln(f"Analysis of Lakes: {', '.join(map(str, lake_ids))}")
+    writeln(f"Lakes Analyzed: {', '.join(map(str, lake_ids))}")
+    writeln(f"Parameters Considered: {', '.join(selected_parameters)}")
     c.showPage()
     y = height - 50
 
     c.setFont("Helvetica-Bold", 14)
     writeln("Health Score Ranking")
-    y -= 10
-    c.setFont("Helvetica", 10)
     bar_start_x = 60
     bar_height = 18
-    max_bar_width = width - bar_start_x - 150 
-    
+    max_bar_width = width - bar_start_x - 200 
     for _, row in results.iterrows():
-        if y < 100:
-            c.showPage()
-            y = height - 50
+        if y < 100: c.showPage(); y = height - 50
         score = row['Health Score']
         rank = int(row['Rank'])
         if score > 0.75: color = colors.darkgreen
         elif score > 0.5: color = colors.orange
         else: color = colors.firebrick
         c.setFillColor(color)
-        bar_width = score * max_bar_width
-        c.rect(bar_start_x, y, bar_width, bar_height, fill=1, stroke=0)
+        c.rect(bar_start_x, y, score * max_bar_width, bar_height, fill=1, stroke=0)
         c.setFillColor(colors.black)
-        label = f"Lake {row['Lake']} (Rank {rank}) - Score: {score:.3f}"
+        label = f"Lake {row['Lake_ID']} (Rank {rank}) - Score: {score:.3f}"
         c.drawString(bar_start_x + 5, y + 5, label)
         y -= (bar_height + 10)
-    y -= 20
     
-    if y < 250:
-        c.showPage()
-        y = height - 50
+    if y < 250: c.showPage(); y = height - 50
         
     c.setFont("Helvetica-Bold", 14)
-    writeln("AI-Generated Comparative Analysis")
+    writeln("AI-Generated Analysis")
     c.setFont("Helvetica", 10)
-    prompt = f"Provide a detailed comparative analysis for the following lakes: {', '.join(map(str, lake_ids))}.\n\n"
+    prompt = f"Based on the selected parameters ({', '.join(selected_parameters)}), provide a detailed comparative analysis for lakes: {', '.join(map(str, lake_ids))}.\n"
     for _, row in results.iterrows():
-        prompt += f"- Lake {row['Lake']} has a health score of {row['Health Score']:.3f} (Rank {int(row['Rank'])}).\n"
-    prompt += "\nBased on this, discuss the likely contributing factors (Vegetation, Urban Area, Climate) and compare their overall health trajectories. Be concise and structured."
+        prompt += f"- Lake {row['Lake_ID']} has a health score of {row['Health Score']:.3f} (Rank {int(row['Rank'])}).\n"
+    prompt += "\nDiscuss the likely contributing factors and compare their overall health. Be concise."
     ai_text = generate_ai_insight_combined(prompt)
     writeln(ai_text)
     
-    metrics = ['Vegetation Area', 'Barren Area', 'Urban Area', 'Precipitation', 'Evaporation', 'Air Temperature']
-    plots = generate_grouped_plots_by_metric(df, lake_ids, metrics)
-
+    time_series_params = [p for p in selected_parameters if p != 'HDI']
+    plots = generate_grouped_plots_by_metric(df, lake_ids, time_series_params)
     for i in range(0, len(plots), 2):
         c.showPage()
-        y_positions = [height / 2 + 20, 50]
         for j in range(2):
             if i + j < len(plots):
+                y_pos = height / 2 + 20 if j == 0 else 50
                 metric, img_buf = plots[i + j]
                 img = ImageReader(img_buf)
                 c.setFont("Helvetica-Bold", 12)
-                c.drawCentredString(width / 2, y_positions[j] + 280, f"Comparison of: {metric}")
-                c.drawImage(img, 40, y_positions[j], width=width-80, height=270, preserveAspectRatio=True, anchor='n')
+                c.drawCentredString(width / 2, y_pos + 280, f"Comparison of: {metric}")
+                c.drawImage(img, 40, y_pos, width=width-80, height=270, preserveAspectRatio=True, anchor='n')
     
     c.save()
     buffer.seek(0)
     return buffer
 
-
 # --- STREAMLIT APP LAYOUT ---
 
 st.set_page_config(layout="wide")
-st.title("🌊 Lake Health Comparative Dashboard")
+st.title("🌊 Dynamic Lake Health Dashboard")
 
-# Initialize session state for analysis results
+# Load and prepare all data at the start
+df_health_full, df_location = prepare_all_data(HEALTH_DATA_PATH, LOCATION_DATA_PATH)
+if df_health_full is None or df_location is None:
+    st.stop()
+
+# Initialize session state
 if 'analysis_results' not in st.session_state:
     st.session_state.analysis_results = None
-    st.session_state.selected_df_for_download = None
-    st.session_state.pdf_buffer = None
+if 'selected_parameters' not in st.session_state:
+    st.session_state.selected_parameters = [p for p in ALL_AVAILABLE_PARAMS if p not in ['Water Clarity', 'Lake Water Surface Temperature', 'HDI']]
+if "selected_lake_ids" not in st.session_state:
+    st.session_state.selected_lake_ids = []
 
 with st.sidebar:
-    st.header("Lake Selector")
-    try:
-        df_location = load_data(LOCATION_DATA_PATH)
-        df_location.columns = df_location.columns.str.strip()
-        df_location['State'] = df_location['State'].astype(str).str.strip()
-        df_location['District'] = df_location['District'].astype(str).str.strip()
+    st.header("1. Select Parameters")
+    st.session_state.selected_parameters = st.multiselect(
+        "Choose parameters for health score:",
+        options=ALL_AVAILABLE_PARAMS,
+        default=st.session_state.selected_parameters,
+        on_change=lambda: st.session_state.update(analysis_results=None)
+    )
 
-        sorted_states = sorted(df_location['State'].unique())
-        selected_state = st.selectbox("Select State", sorted_states)
-
-        filtered_districts = df_location[df_location['State'] == selected_state]['District'].unique()
-        sorted_districts = sorted(filtered_districts)
-        selected_district = st.selectbox("Select District", sorted_districts)
-
-        filtered_lakes = df_location[(df_location['State'] == selected_state) & (df_location['District'] == selected_district)]
-        lake_ids_in_district = sorted(filtered_lakes['Lake_ID'].unique())
+    st.header("2. Select Lakes")
+    sorted_states = sorted(df_location['State'].unique())
+    selected_state = st.selectbox("Select State", sorted_states)
+    filtered_districts = df_location[df_location['State'] == selected_state]['District'].unique()
+    selected_district = st.selectbox("Select District", sorted(filtered_districts))
+    
+    filtered_lakes_by_loc = df_location[(df_location['State'] == selected_state) & (df_location['District'] == selected_district)]
+    lake_ids_in_district = sorted(filtered_lakes_by_loc['Lake_ID'].unique())
+    if lake_ids_in_district:
         selected_lake_id = st.selectbox("Select a Lake ID to Add", lake_ids_in_district)
-
-        if "selected_lake_ids" not in st.session_state:
-            st.session_state.selected_lake_ids = []
-
         if st.button("Add Lake to Comparison"):
             if selected_lake_id not in st.session_state.selected_lake_ids:
                 st.session_state.selected_lake_ids.append(selected_lake_id)
-            else:
-                st.info(f"Lake {selected_lake_id} is already in the list.")
-            # Clear previous results when the list is modified
             st.session_state.analysis_results = None 
-            st.session_state.pdf_buffer = None
-            st.session_state.selected_df_for_download = None
-
-    except FileNotFoundError:
-        st.error(f"Location data file not found at '{LOCATION_DATA_PATH}'.")
-        filtered_lakes = pd.DataFrame() 
+    else:
+        st.warning("No lakes found in this district.")
 
 col1, col2 = st.columns([0.6, 0.4])
 
 with col1:
     st.subheader(f"Map of Lakes in {selected_district}, {selected_state}")
-    if not filtered_lakes.empty:
-        map_center = [filtered_lakes['Lat'].mean(), filtered_lakes['Lon'].mean()]
+    if not filtered_lakes_by_loc.empty:
+        map_center = [filtered_lakes_by_loc['Lat'].mean(), filtered_lakes_by_loc['Lon'].mean()]
         m = folium.Map(location=map_center, zoom_start=8)
         marker_cluster = MarkerCluster().add_to(m)
-
-        for _, row in filtered_lakes.iterrows():
-            popup_html = f"<b>Lake ID:</b> {row['Lake_ID']}<br><b>District:</b> {row['District']}"
+        for _, row in filtered_lakes_by_loc.iterrows():
             folium.Marker(
-                location=[row['Lat'], row['Lon']],
-                popup=folium.Popup(popup_html, max_width=250),
+                [row['Lat'], row['Lon']],
+                popup=f"<b>Lake ID:</b> {row['Lake_ID']}",
                 tooltip=f"Lake ID: {row['Lake_ID']}",
                 icon=folium.Icon(color='blue', icon='water')
             ).add_to(marker_cluster)
         st_folium(m, height=600, use_container_width=True)
-    else:
-        st.warning("No lake location data found for the selected district.")
 
 with col2:
     st.subheader("Lakes Selected for Analysis")
-    
     ids_text = ", ".join(map(str, st.session_state.selected_lake_ids))
-    edited_ids_text = st.text_area(
-        "Edit Lake IDs (comma-separated)", 
-        value=ids_text,
-        height=100,
-        help="Add lakes using the sidebar or type IDs directly here."
-    )
+    edited_ids_text = st.text_area("Edit Lake IDs (comma-separated)", ids_text, height=100)
     
     try:
-        if edited_ids_text:
-            updated_ids = [int(x.strip()) for x in edited_ids_text.split(",") if x.strip().isdigit()]
-        else:
-            updated_ids = []
-        
+        updated_ids = [int(x.strip()) for x in edited_ids_text.split(",") if x.strip()] if edited_ids_text else []
         if updated_ids != st.session_state.selected_lake_ids:
             st.session_state.analysis_results = None
-            st.session_state.pdf_buffer = None
-            st.session_state.selected_df_for_download = None
-        
         st.session_state.selected_lake_ids = updated_ids
     except (ValueError, TypeError):
-        st.warning("Invalid input. Please enter only comma-separated numbers.")
+        st.warning("Invalid input. Please enter comma-separated numbers.")
 
     lake_ids_to_analyze = st.session_state.get("selected_lake_ids", [])
+    is_disabled = not lake_ids_to_analyze or not st.session_state.selected_parameters
     
-    if st.button("Analyze Selected Lakes", disabled=not lake_ids_to_analyze, use_container_width=True):
+    if st.button("Analyze Selected Lakes", disabled=is_disabled, use_container_width=True):
         st.session_state.analysis_results = None
-        st.session_state.pdf_buffer = None
-        st.session_state.selected_df_for_download = None
-        
         with st.spinner("Analyzing..."):
             try:
-                df_health = load_data(HEALTH_DATA_PATH)
-                lake_ids_str = [str(i) for i in lake_ids_to_analyze]
-                selected_df = df_health[df_health["Lake"].astype(str).isin(lake_ids_str)]
-
-                if selected_df.empty:
-                    st.error(f"No health data found for the selected Lake IDs: {', '.join(lake_ids_str)}")
-                else:
-                    results = calculate_lake_health_score(selected_df)
-                    st.session_state.analysis_results = results
-                    st.session_state.selected_df_for_download = selected_df
-                    
-                    try:
-                        st.session_state.pdf_buffer = generate_comparative_pdf_report(selected_df, results, lake_ids_to_analyze)
-                    except Exception as pdf_e:
-                        st.warning(f"⚠️ Could not generate PDF report. Error: {pdf_e}")
-                        st.session_state.pdf_buffer = None
-
+                selected_df = df_health_full[df_health_full["Lake_ID"].isin(lake_ids_to_analyze)].copy()
+                results = calculate_lake_health_score(selected_df, st.session_state.selected_parameters)
+                st.session_state.analysis_results = results
+                try:
+                    st.session_state.pdf_buffer = generate_comparative_pdf_report(selected_df, results, lake_ids_to_analyze, st.session_state.selected_parameters)
+                except Exception as pdf_e:
+                    st.warning(f"⚠️ Could not generate PDF report. Error: {pdf_e}")
             except Exception as e:
                 st.error(f"A critical error occurred during analysis: {e}")
 
@@ -385,28 +368,12 @@ with col2:
 
     if st.session_state.analysis_results is not None and not st.session_state.analysis_results.empty:
         st.subheader("Health Score Results")
-        st.dataframe(st.session_state.analysis_results[["Lake", "Health Score", "Rank"]].style.format({"Health Score": "{:.3f}"}))
-
+        st.dataframe(st.session_state.analysis_results[["Lake_ID", "Health Score", "Rank"]].style.format({"Health Score": "{:.3f}"}))
         st.subheader("Download Center")
         
-        if st.session_state.selected_df_for_download is not None:
-            csv_data = st.session_state.selected_df_for_download.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download Filtered Data (CSV)",
-                data=csv_data,
-                file_name=f"filtered_data_{'_'.join(map(str, lake_ids_to_analyze))}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-
-        if st.session_state.pdf_buffer is not None:
-            st.download_button(
-                label="📄 Download PDF Report",
-                data=st.session_state.pdf_buffer,
-                # ** THE FIX IS HERE **
-                file_name=f"comparative_report_{'_'.join(map(str, lake_ids_to_analyze))}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+        csv_data = df_health_full[df_health_full["Lake_ID"].isin(lake_ids_to_analyze)].to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Filtered Data (CSV)", csv_data, f"data.csv", "text/csv", use_container_width=True)
+        if 'pdf_buffer' in st.session_state and st.session_state.pdf_buffer:
+            st.download_button("📄 Download PDF Report", st.session_state.pdf_buffer, f"report.pdf", "application/pdf", use_container_width=True)
     else:
-        st.info("ℹ️ Add lakes to the list above and click 'Analyze Selected Lakes'.")
+        st.info("ℹ️ Select parameters and add lakes, then click 'Analyze'.")
