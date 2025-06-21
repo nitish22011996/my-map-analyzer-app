@@ -45,11 +45,9 @@ def prepare_all_data(health_path, location_path):
         st.error(f"Data file not found: {e}.")
         return None, None, None
 
-    # **FIX**: This map is now robust and handles multiple possible names for columns.
     health_col_map = {
         'Air_Temperature': 'Air Temperature', 'Evaporation': 'Evaporation', 'Precipitation': 'Precipitation',
-        'Barren': 'Barren Area', 
-        'Urban and Vegetation': 'Urban and Vegetation Area', 'Urban and Built-up': 'Urban and Vegetation Area',
+        'Barren': 'Barren Area', 'Urban and Vegetation': 'Urban and Vegetation Area', 'Urban and Built-up': 'Urban and Vegetation Area',
         'Lake_Water_Surface_Temperature': 'Lake Water Surface Temperature', 
         'Water_Clarity': 'Water Clarity', 'Water_Clarity(FUI)': 'Water Clarity',
         'Area': 'Area'
@@ -136,34 +134,34 @@ def calculate_lake_health_score(df, selected_ui_options):
 
 
 def build_detailed_ai_prompt(results, df, selected_ui_options):
-    """
-    **NEW FUNCTION**: Creates a rich, detailed prompt for the AI with raw values,
-    qualitative assessments, and trends.
-    """
     def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.5
     
     prompt = f"Perform a detailed environmental health analysis for the following lakes, based on these selected parameters: {', '.join(selected_ui_options)}.\n\n"
     prompt += "For each lake, I have provided the raw data, a qualitative assessment (Good/Poor), and the trend. Your task is to synthesize this information into a concise, comparative analysis discussing the key drivers of each lake's health score.\n\n"
 
-    latest_year_df = df.loc[df.groupby('Lake_ID')['Year'].idxmax()]
+    latest_year_df = df.loc[df.groupby('Lake_ID')['Year'].idxmax()].set_index('Lake_ID')
+    final_weights = get_effective_weights(selected_ui_options, df.columns)
+    params_to_process = list(final_weights.keys())
+
+    # Pre-calculate normalized scores for all lakes at once
+    norm_scores_all = {param: norm(latest_year_df[param]) for param in params_to_process}
 
     for _, row in results.iterrows():
         lake_id = row['Lake_ID']
         prompt += f"--- Lake {lake_id} ---\n"
         prompt += f"Final Health Score: {row['Health Score']:.3f} (Rank: {row['Rank']})\n"
         
-        lake_latest_data = latest_year_df[latest_year_df['Lake_ID'] == lake_id].iloc[0]
+        lake_latest_data = latest_year_df.loc[lake_id]
         
-        final_weights = get_effective_weights(selected_ui_options, df.columns)
-        params_to_process = list(final_weights.keys())
-
         for param in params_to_process:
             props = PARAMETER_PROPERTIES[param]
             raw_value = lake_latest_data[param]
             
-            # Qualitative assessment
-            norm_score = norm(latest_year_df[param])
-            is_good = (norm_score > 0.5) if props['impact'] == 'positive' else (norm_score < 0.5)
+            # ** THE FIX IS HERE: Select the single score for the current lake **
+            single_norm_score = norm_scores_all[param].loc[lake_id]
+            
+            # Qualitative assessment based on the single score
+            is_good = (single_norm_score > 0.5) if props['impact'] == 'positive' else (single_norm_score < 0.5)
             assessment = "Good" if is_good else "Poor"
 
             prompt += f"- {param}: {raw_value:.2f} ({assessment})"
@@ -173,8 +171,9 @@ def build_detailed_ai_prompt(results, df, selected_ui_options):
                 lake_history = df[df['Lake_ID'] == lake_id]
                 if len(lake_history['Year'].unique()) > 1:
                     slope = linregress(lake_history['Year'], lake_history[param]).slope
-                    trend_dir = "Increasing" if slope > 0 else "Decreasing" if slope < 0 else "Stable"
-                    trend_impact = "Positive" if (slope > 0 and props['impact'] == 'positive') or (slope < 0 and props['impact'] == 'negative') else "Negative"
+                    trend_dir = "Increasing" if slope > 0.001 else "Decreasing" if slope < -0.001 else "Stable"
+                    trend_impact_good = (slope > 0 and props['impact'] == 'positive') or (slope < 0 and props['impact'] == 'negative')
+                    trend_impact = "Positive" if trend_impact_good else "Negative"
                     prompt += f", Trend: {trend_dir} ({trend_impact})\n"
                 else:
                     prompt += ", Trend: N/A\n"
@@ -201,7 +200,6 @@ def generate_ai_insight_combined(prompt):
 
 
 def generate_grouped_plots_by_metric(df, lake_ids, metrics):
-    # This function remains robust and correct
     grouped_images = []
     for metric in metrics:
         plt.figure(figsize=(10, 6), dpi=150)
@@ -258,7 +256,7 @@ def generate_comparative_pdf_report(df, results, lake_ids, selected_ui_options):
         c.setFillColor(colors.black); c.drawString(bar_start_x + 5, y + 5, f"Lake {row['Lake_ID']} (Rank {rank}) - Score: {score:.3f}")
         y -= (bar_height + 10)
     
-    if y < 300: c.showPage(); y = height - 50 # Ensure more space for AI text
+    if y < 300: c.showPage(); y = height - 50
     c.setFont("Helvetica-Bold", 14); writeln("AI-Generated Analysis"); c.setFont("Helvetica", 10)
     detailed_prompt = build_detailed_ai_prompt(results, df, selected_ui_options)
     writeln(generate_ai_insight_combined(detailed_prompt))
