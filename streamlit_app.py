@@ -20,7 +20,7 @@ LOCATION_DATA_PATH = 'HDI_lake_district.csv'
 HEALTH_DATA_PATH = "lake_health_data.csv"
 
 # --- PARAMETER DICTIONARY ---
-# Defines properties for the actual data columns
+# **FIX**: Added 'Area' and ensured all parameters are recognized.
 PARAMETER_PROPERTIES = {
     'Air Temperature': {'impact': 'negative', 'type': 'climate'},
     'Evaporation': {'impact': 'negative', 'type': 'climate'},
@@ -29,9 +29,9 @@ PARAMETER_PROPERTIES = {
     'Water Clarity': {'impact': 'positive', 'type': 'water_quality'},
     'Barren Area': {'impact': 'negative', 'type': 'land_cover'},
     'Urban and Vegetation Area': {'impact': 'negative', 'type': 'land_cover'},
-    'HDI': {'impact': 'positive', 'type': 'socioeconomic'}
+    'HDI': {'impact': 'positive', 'type': 'socioeconomic'},
+    'Area': {'impact': 'positive', 'type': 'physical'}
 }
-# Defines the internal data columns that belong to the "Land Cover" UI option
 LAND_COVER_INTERNAL_COLS = ['Barren Area', 'Urban and Vegetation Area']
 
 
@@ -50,10 +50,13 @@ def prepare_all_data(health_path, location_path):
         st.error(f"Data file not found: {e}.")
         return None, None, None
 
+    # **FIX**: Expanded map to include 'Area' and both 'Water_Clarity' variations.
     health_col_map = {
         'Air_Temperature': 'Air Temperature', 'Evaporation': 'Evaporation', 'Precipitation': 'Precipitation',
         'Barren': 'Barren Area', 'Urban and Vegetation': 'Urban and Vegetation Area',
-        'Lake_Water_Surface_Temperature': 'Lake Water Surface Temperature', 'Water_Clarity': 'Water Clarity'
+        'Lake_Water_Surface_Temperature': 'Lake Water Surface Temperature', 
+        'Water_Clarity': 'Water Clarity', 'Water_Clarity(FUI)': 'Water Clarity', # Handles both possible names
+        'Area': 'Area'
     }
     df_health = df_health.rename(columns=health_col_map)
 
@@ -71,14 +74,10 @@ def prepare_all_data(health_path, location_path):
     location_subset = df_location[['Lake_ID', 'HDI']].copy()
     df_merged = pd.merge(df_health, location_subset, on='Lake_ID', how='left')
 
-    # Dynamically build the list of UI options based on available data
     available_data_cols = [col for col in df_merged.columns if col in PARAMETER_PROPERTIES]
     ui_options = [p for p in available_data_cols if p not in LAND_COVER_INTERNAL_COLS]
-    
-    # Check if any land cover columns are present to create the single "Land Cover" option
     if any(p in available_data_cols for p in LAND_COVER_INTERNAL_COLS):
         ui_options.append("Land Cover")
-        
     if not ui_options:
         st.error("No valid analysis parameters found in the data files.")
         return None, None, None
@@ -86,28 +85,39 @@ def prepare_all_data(health_path, location_path):
     return df_merged, df_location, sorted(ui_options)
 
 
+def get_effective_weights(selected_ui_options, available_data_cols):
+    """
+    **NEW FUNCTION**: Centralizes the hierarchical weight calculation logic.
+    This is the core fix for the weighting bug.
+    """
+    effective_weights = {}
+    num_main_groups = len(selected_ui_options)
+    w_main = 1.0 / num_main_groups if num_main_groups > 0 else 0.0
+
+    if "Land Cover" in selected_ui_options:
+        # Find which land cover columns are actually available in the data
+        available_lc_cols_in_data = [p for p in LAND_COVER_INTERNAL_COLS if p in available_data_cols]
+        num_land_cover_items = len(available_lc_cols_in_data)
+        w_sub_landcover = 1.0 / num_land_cover_items if num_land_cover_items > 0 else 0.0
+        
+        for lc_param in available_lc_cols_in_data:
+            effective_weights[lc_param] = w_main * w_sub_landcover
+    
+    for param in selected_ui_options:
+        if param != "Land Cover":
+            effective_weights[param] = w_main
+            
+    return effective_weights
+
+
 def calculate_lake_health_score(df, selected_ui_options):
     if not selected_ui_options: return pd.DataFrame()
     def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.5
     def rev_norm(x): return 1.0 - norm(x)
 
-    # Determine which actual data columns to process
-    params_to_process = []
-    if "Land Cover" in selected_ui_options:
-        # Find which land cover columns are actually available in the dataframe
-        available_lc_cols = [p for p in LAND_COVER_INTERNAL_COLS if p in df.columns]
-        params_to_process.extend(available_lc_cols)
-    for p in selected_ui_options:
-        if p != "Land Cover":
-            params_to_process.append(p)
-
-    # Hierarchical Weighting
-    num_main_groups = len(selected_ui_options)
-    w_main = 1.0 / num_main_groups if num_main_groups > 0 else 0.0
-    
-    available_lc_cols = [p for p in LAND_COVER_INTERNAL_COLS if p in df.columns]
-    num_land_cover_items = len(available_lc_cols)
-    w_sub_landcover = 1.0 / num_land_cover_items if num_land_cover_items > 0 else 0.0
+    # **FIX**: Use the new, correct weighting function.
+    final_weights = get_effective_weights(selected_ui_options, df.columns)
+    params_to_process = list(final_weights.keys())
 
     latest_year_data = df.loc[df.groupby('Lake_ID')['Year'].idxmax()].copy().set_index('Lake_ID')
     total_score = pd.Series(0.0, index=latest_year_data.index)
@@ -128,8 +138,7 @@ def calculate_lake_health_score(df, selected_ui_options):
             p_value_norm = 1.0 - norm(p_values)
             factor_score = (present_value_score + slope_norm + p_value_norm) / 3.0
         
-        final_weight = w_main * w_sub_landcover if param in LAND_COVER_INTERNAL_COLS else w_main
-        total_score += final_weight * factor_score
+        total_score += final_weights[param] * factor_score
 
     latest_year_data['Health Score'] = total_score
     latest_year_data['Rank'] = latest_year_data['Health Score'].rank(ascending=False, method='min').astype(int)
@@ -181,8 +190,7 @@ def generate_comparative_pdf_report(df, results, lake_ids, selected_ui_options):
     def writeln(text, step=16):
         nonlocal y; y_buffer = 20
         text_lines = []
-        for line in text.split('\n'):
-            text_lines.extend(line[i:i+95] for i in range(0, len(line), 95))
+        for line in text.split('\n'): text_lines.extend(line[i:i+95] for i in range(0, len(line), 95))
         if y - (len(text_lines) * step) < y_buffer: c.showPage(); y = height - 50
         for line in text_lines: c.drawString(40, y, line); y -= step
     
@@ -191,20 +199,11 @@ def generate_comparative_pdf_report(df, results, lake_ids, selected_ui_options):
     writeln(f"Lakes Analyzed: {', '.join(map(str, lake_ids))}")
     writeln(f"Parameters Considered: {', '.join(selected_ui_options)}")
     
-    # --- Weight Calculation for PDF ---
-    num_main_groups = len(selected_ui_options)
-    w_main = 1.0 / num_main_groups if num_main_groups > 0 else 0.0
-    available_lc_cols = [p for p in LAND_COVER_INTERNAL_COLS if p in df.columns]
-    num_land_cover_items = len(available_lc_cols)
-    w_sub_landcover = 1.0 / num_land_cover_items if num_land_cover_items > 0 else 0.0
-    
+    # **FIX**: Use the centralized weight function for accurate display.
     y -= 10; c.setFont("Helvetica-Bold", 14); writeln("Effective Weights Used:"); c.setFont("Helvetica", 10)
-    for param in selected_ui_options:
-        if param == "Land Cover":
-            for lc_param in available_lc_cols:
-                writeln(f"- {lc_param}: {w_main * w_sub_landcover:.3f}")
-        else:
-            writeln(f"- {param}: {w_main:.3f}")
+    final_weights = get_effective_weights(selected_ui_options, df.columns)
+    for param, weight in final_weights.items():
+        writeln(f"- {param}: {weight:.3f}")
 
     c.showPage(); y = height - 50
     c.setFont("Helvetica-Bold", 14); writeln("Health Score Ranking")
@@ -226,11 +225,8 @@ def generate_comparative_pdf_report(df, results, lake_ids, selected_ui_options):
     prompt += "\nDiscuss factors and compare their health. Be concise."
     writeln(generate_ai_insight_combined(prompt))
     
-    params_to_plot = []
-    if "Land Cover" in selected_ui_options: params_to_plot.extend(available_lc_cols)
-    for p in selected_ui_options:
-        if p != "Land Cover" and p != "HDI": params_to_plot.append(p)
-
+    params_to_plot = list(final_weights.keys())
+    if 'HDI' in params_to_plot: params_to_plot.remove('HDI')
     plots = generate_grouped_plots_by_metric(df, lake_ids, params_to_plot)
     for i in range(0, len(plots), 2):
         c.showPage()
