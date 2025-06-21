@@ -20,8 +20,6 @@ LOCATION_DATA_PATH = 'HDI_lake_district.csv'
 HEALTH_DATA_PATH = "lake_health_data.csv"
 
 # --- PARAMETER DICTIONARY ---
-# This dictionary defines all POSSIBLE parameters the app can understand.
-# It is now updated to match your latest CSV structure.
 PARAMETER_PROPERTIES = {
     'Air Temperature': {'impact': 'negative', 'type': 'climate'},
     'Evaporation': {'impact': 'negative', 'type': 'climate'},
@@ -29,7 +27,6 @@ PARAMETER_PROPERTIES = {
     'Lake Water Surface Temperature': {'impact': 'negative', 'type': 'water_quality'},
     'Water Clarity': {'impact': 'positive', 'type': 'water_quality'},
     'Barren Area': {'impact': 'negative', 'type': 'land_cover'},
-    # Assumption: Combined 'Urban and Vegetation' has a net negative impact due to urban pressure.
     'Urban and Vegetation Area': {'impact': 'negative', 'type': 'land_cover'},
     'HDI': {'impact': 'positive', 'type': 'socioeconomic'}
 }
@@ -51,10 +48,9 @@ def prepare_all_data(health_path, location_path):
         st.error(f"Data file not found: {e}. Please ensure file paths are correct.")
         return None, None, None
 
-    # ** FIX: This map now exactly matches the column names you provided. **
     health_col_map = {
         'Air_Temperature': 'Air Temperature', 'Evaporation': 'Evaporation', 'Precipitation': 'Precipitation',
-        'Barren': 'Barren Area', 'Urban and Vegetation': 'Urban and Vegetation Area', # Correctly maps the combined column
+        'Barren': 'Barren Area', 'Urban and Vegetation': 'Urban and Vegetation Area',
         'Lake_Water_Surface_Temperature': 'Lake Water Surface Temperature', 'Water_Clarity': 'Water Clarity'
     }
     df_health = df_health.rename(columns=health_col_map)
@@ -119,7 +115,9 @@ def calculate_lake_health_score(df, selected_parameters):
         final_weight = w_main * w_sub_landcover if param in LAND_COVER_PARAMS else w_main
         total_score += final_weight * factor_score
 
-    latest_year_data['Health Score'] = norm(total_score)
+    # ** THE FIX IS HERE: The total_score is already the final score. Do not normalize it again. **
+    latest_year_data['Health Score'] = total_score
+    
     latest_year_data['Rank'] = latest_year_data['Health Score'].rank(ascending=False, method='min').astype(int)
     
     return latest_year_data.reset_index().sort_values('Rank')
@@ -210,33 +208,24 @@ st.title("🌊 Dynamic Lake Health Dashboard")
 df_health_full, df_location, available_params = prepare_all_data(HEALTH_DATA_PATH, LOCATION_DATA_PATH)
 if df_health_full is None: st.stop()
 
-# Initialize session state with robust defaults
 if 'confirmed_parameters' not in st.session_state: st.session_state.confirmed_parameters = []
 if "selected_lake_ids" not in st.session_state: st.session_state.selected_lake_ids = []
 if 'analysis_results' not in st.session_state: st.session_state.analysis_results = None
 
 with st.sidebar:
     st.header("1. Select & Set Parameters")
-    # UI for selecting parameters
     temp_selected_params = st.multiselect(
         "Choose parameters for health score:",
         options=available_params,
         default=st.session_state.get('confirmed_parameters', [])
     )
-    
-    # Button to confirm the parameter selection
     if st.button("Set Parameters"):
         st.session_state.confirmed_parameters = temp_selected_params
-        st.session_state.analysis_results = None # Reset analysis if params change
+        st.session_state.analysis_results = None
         st.success("Parameters set!")
-
-    # Display the confirmed parameters
     if st.session_state.confirmed_parameters:
-        st.markdown("---")
-        st.markdown("**Confirmed Parameters for Analysis:**")
-        for param in st.session_state.confirmed_parameters:
-            st.markdown(f"- `{param}`")
-    
+        st.markdown("---"); st.markdown("**Confirmed Parameters for Analysis:**")
+        for param in st.session_state.confirmed_parameters: st.markdown(f"- `{param}`")
     st.markdown("---")
     st.header("2. Select Lakes")
     sorted_states = sorted(df_location['State'].unique())
@@ -245,12 +234,10 @@ with st.sidebar:
     selected_district = st.selectbox("Select District", sorted(filtered_districts))
     filtered_lakes_by_loc = df_location[(df_location['State'] == selected_state) & (df_location['District'] == selected_district)]
     lake_ids_in_district = sorted(filtered_lakes_by_loc['Lake_ID'].unique())
-    
     if lake_ids_in_district:
         selected_lake_id = st.selectbox("Select a Lake ID to Add", lake_ids_in_district)
         if st.button("Add Lake to Comparison"):
-            if selected_lake_id not in st.session_state.selected_lake_ids:
-                st.session_state.selected_lake_ids.append(selected_lake_id)
+            if selected_lake_id not in st.session_state.selected_lake_ids: st.session_state.selected_lake_ids.append(selected_lake_id)
             st.session_state.analysis_results = None 
     else: st.warning("No lakes found in this district.")
 
@@ -262,47 +249,38 @@ with col1:
         map_center = [filtered_lakes_by_loc['Lat'].mean(), filtered_lakes_by_loc['Lon'].mean()]
         m = folium.Map(location=map_center, zoom_start=8)
         marker_cluster = MarkerCluster().add_to(m)
-        for _, row in filtered_lakes_by_loc.iterrows():
-            folium.Marker([row['Lat'], row['Lon']], popup=f"<b>Lake ID:</b> {row['Lake_ID']}", tooltip=f"Lake ID: {row['Lake_ID']}", icon=folium.Icon(color='blue', icon='water')).add_to(marker_cluster)
-        st_folium(m, height=550, use_container_width=True) # Compact map height
+        for _, row in filtered_lakes_by_loc.iterrows(): folium.Marker([row['Lat'], row['Lon']], popup=f"<b>Lake ID:</b> {row['Lake_ID']}", tooltip=f"Lake ID: {row['Lake_ID']}", icon=folium.Icon(color='blue', icon='water')).add_to(marker_cluster)
+        st_folium(m, height=550, use_container_width=True)
 
 with col2:
     st.subheader("Lakes Selected for Analysis")
     ids_text = ", ".join(map(str, st.session_state.selected_lake_ids))
-    edited_ids_text = st.text_area("Edit Lake IDs (comma-separated)", ids_text, height=80) # Compact text area
+    edited_ids_text = st.text_area("Edit Lake IDs (comma-separated)", ids_text, height=80)
     try:
         updated_ids = [int(x.strip()) for x in edited_ids_text.split(",") if x.strip()] if edited_ids_text else []
-        if updated_ids != st.session_state.selected_lake_ids:
-            st.session_state.analysis_results = None
+        if updated_ids != st.session_state.selected_lake_ids: st.session_state.analysis_results = None
         st.session_state.selected_lake_ids = updated_ids
     except (ValueError, TypeError): st.warning("Invalid input.")
-
     lake_ids_to_analyze = st.session_state.get("selected_lake_ids", [])
     is_disabled = not lake_ids_to_analyze or not st.session_state.confirmed_parameters
-    
     if st.button("Analyze Selected Lakes", disabled=is_disabled, use_container_width=True):
         st.session_state.analysis_results = None
         with st.spinner("Analyzing..."):
             try:
                 selected_df = df_health_full[df_health_full["Lake_ID"].isin(lake_ids_to_analyze)].copy()
-                if selected_df.empty:
-                    st.error(f"No health data found for Lake IDs: {lake_ids_to_analyze}")
+                if selected_df.empty: st.error(f"No health data found for Lake IDs: {lake_ids_to_analyze}")
                 else:
                     results = calculate_lake_health_score(selected_df, st.session_state.confirmed_parameters)
                     st.session_state.analysis_results = results
                     try: st.session_state.pdf_buffer = generate_comparative_pdf_report(selected_df, results, lake_ids_to_analyze, st.session_state.confirmed_parameters)
                     except Exception as pdf_e: st.warning(f"⚠️ PDF report failed. Error: {pdf_e}")
             except Exception as e: st.error(f"Critical analysis error: {e}")
-    
     st.markdown("---") 
-    
     if st.session_state.analysis_results is not None and not st.session_state.analysis_results.empty:
         st.subheader("Health Score Results")
-        st.dataframe(st.session_state.analysis_results[["Lake_ID", "Health Score", "Rank"]].style.format({"Health Score": "{:.3f}"}), height=200) # Compact results table
+        st.dataframe(st.session_state.analysis_results[["Lake_ID", "Health Score", "Rank"]].style.format({"Health Score": "{:.3f}"}), height=200)
         st.subheader("Download Center")
         csv_data = df_health_full[df_health_full["Lake_ID"].isin(lake_ids_to_analyze)].to_csv(index=False).encode('utf-8')
         st.download_button("📥 Download Filtered Data (CSV)", csv_data, f"data.csv", "text/csv", use_container_width=True)
-        if 'pdf_buffer' in st.session_state and st.session_state.pdf_buffer:
-            st.download_button("📄 Download PDF Report", st.session_state.pdf_buffer, f"report.pdf", "application/pdf", use_container_width=True)
-    else:
-        st.info("ℹ️ Set parameters and add lakes, then click 'Analyze'.")
+        if 'pdf_buffer' in st.session_state and st.session_state.pdf_buffer: st.download_button("📄 Download PDF Report", st.session_state.pdf_buffer, f"report.pdf", "application/pdf", use_container_width=True)
+    else: st.info("ℹ️ Set parameters and add lakes, then click 'Analyze'.")
