@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker # **NEW**: Import for integer ticks
 import requests
 from io import BytesIO
 from scipy.stats import linregress
@@ -46,85 +47,61 @@ def prepare_all_data(health_path, location_path):
     except FileNotFoundError as e:
         st.error(f"Data file not found: {e}.")
         return None, None, None
-
     health_col_map = {
         'Air_Temperature': 'Air Temperature', 'Evaporation': 'Evaporation', 'Precipitation': 'Precipitation',
         'Barren': 'Barren Area', 'Urban and Built-up': 'Urban Area', 'Vegetation': 'Vegetation Area',
         'Lake_Water_Surface_Temperature': 'Lake Water Surface Temperature', 
-        'Water_Clarity': 'Water Clarity', 'Water_Clarity(FUI)': 'Water Clarity',
-        'Area': 'Area'
+        'Water_Clarity': 'Water Clarity', 'Water_Clarity(FUI)': 'Water Clarity', 'Area': 'Area'
     }
     df_health = df_health.rename(columns=health_col_map)
-
     potential_id_cols = ['Lake_ID', 'Lake_id', 'lake_id']
     health_id_col = next((col for col in potential_id_cols if col in df_health.columns), None)
     loc_id_col = next((col for col in potential_id_cols if col in df_location.columns), None)
     if not health_id_col or not loc_id_col:
         st.error(f"Critical Error: Could not find a lake identifier column in one or both CSV files.")
         return None, None, None
-    df_health = df_health.rename(columns={health_id_col: 'Lake_ID'})
-    df_location = df_location.rename(columns={loc_id_col: 'Lake_ID'})
-
+    df_health = df_health.rename(columns={health_id_col: 'Lake_ID'}); df_location = df_location.rename(columns={loc_id_col: 'Lake_ID'})
     df_health['Lake_ID'] = pd.to_numeric(df_health['Lake_ID'], errors='coerce').dropna().astype(int)
     df_location['Lake_ID'] = pd.to_numeric(df_location['Lake_ID'], errors='coerce').dropna().astype(int)
     location_subset = df_location[['Lake_ID', 'HDI']].copy()
     df_merged = pd.merge(df_health, location_subset, on='Lake_ID', how='left')
-
     available_data_cols = [col for col in df_merged.columns if col in PARAMETER_PROPERTIES]
     ui_options = [p for p in available_data_cols if p not in LAND_COVER_INTERNAL_COLS]
-    if any(p in available_data_cols for p in LAND_COVER_INTERNAL_COLS):
-        ui_options.append("Land Cover")
+    if any(p in available_data_cols for p in LAND_COVER_INTERNAL_COLS): ui_options.append("Land Cover")
     if not ui_options:
-        st.error("No valid analysis parameters found in the data files.")
-        return None, None, None
-
+        st.error("No valid analysis parameters found in the data files."); return None, None, None
     return df_merged, df_location, sorted(ui_options)
 
-
 def get_effective_weights(selected_ui_options, all_df_columns):
-    effective_weights = {}
-    num_main_groups = len(selected_ui_options)
+    effective_weights = {}; num_main_groups = len(selected_ui_options)
     w_main = 1.0 / num_main_groups if num_main_groups > 0 else 0.0
     if "Land Cover" in selected_ui_options:
         available_lc_cols_in_data = [p for p in LAND_COVER_INTERNAL_COLS if p in all_df_columns]
         num_land_cover_items = len(available_lc_cols_in_data)
         w_sub_landcover = 1.0 / num_land_cover_items if num_land_cover_items > 0 else 0.0
-        for lc_param in available_lc_cols_in_data:
-            effective_weights[lc_param] = w_main * w_sub_landcover
+        for lc_param in available_lc_cols_in_data: effective_weights[lc_param] = w_main * w_sub_landcover
     for param in selected_ui_options:
-        if param != "Land Cover":
-            effective_weights[param] = w_main
+        if param != "Land Cover": effective_weights[param] = w_main
     return effective_weights
-
 
 def calculate_lake_health_score(df, selected_ui_options):
     if not selected_ui_options: return pd.DataFrame(), {}
     def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.5
     def rev_norm(x): return 1.0 - norm(x)
-
     final_weights = get_effective_weights(selected_ui_options, df.columns)
     params_to_process = list(final_weights.keys())
-    
-    # **NEW**: Intelligent Data Imputation
     df_imputed = df.copy()
     for param in params_to_process:
         if param in df_imputed.columns:
-            # Sort by year to ensure correct back/forward fill
             df_imputed = df_imputed.sort_values(by=['Lake_ID', 'Year'])
-            # Group by lake and fill NaNs with the most recent available data
             df_imputed[param] = df_imputed.groupby('Lake_ID')[param].transform(lambda x: x.bfill().ffill())
-            # Final fallback to 0 if a lake has no data at all for a param
             df_imputed[param] = df_imputed[param].fillna(0)
-    
     latest_year_data = df_imputed.loc[df_imputed.groupby('Lake_ID')['Year'].idxmax()].copy().set_index('Lake_ID')
     total_score = pd.Series(0.0, index=latest_year_data.index)
     calculation_details = {lake_id: {} for lake_id in latest_year_data.index}
-
     for param in params_to_process:
-        props = PARAMETER_PROPERTIES[param]
-        latest_values = latest_year_data[param]
+        props = PARAMETER_PROPERTIES[param]; latest_values = latest_year_data[param]
         present_value_score_result = norm(latest_values) if props['impact'] == 'positive' else rev_norm(latest_values)
-        
         if param == 'HDI':
             factor_score_result = present_value_score_result
             for lake_id in latest_year_data.index:
@@ -143,34 +120,21 @@ def calculate_lake_health_score(df, selected_ui_options):
                 p_norm = p_value_norm_result.loc[lake_id] if isinstance(p_value_norm_result, pd.Series) else p_value_norm_result
                 factor_score = factor_score_result.loc[lake_id] if isinstance(factor_score_result, pd.Series) else factor_score_result
                 calculation_details[lake_id][param] = {'Raw Value': latest_values.loc[lake_id], 'Norm Pres.': pv_score, 'Norm Trend': s_norm, 'Norm P-Val': p_norm, 'Factor Score': factor_score, 'Weight': final_weights[param], 'Contribution': factor_score * final_weights[param]}
-        
         total_score += final_weights[param] * factor_score_result
-
     latest_year_data['Health Score'] = total_score
     latest_year_data['Rank'] = latest_year_data['Health Score'].rank(ascending=False, method='min').astype(int)
-    
     return latest_year_data.reset_index().sort_values('Rank'), calculation_details
 
-
 def build_detailed_ai_prompt(results, df, selected_ui_options):
-    """
-    **UPGRADED FUNCTION**: Creates a highly structured prompt for a better AI response.
-    """
     def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.5
-    
-    prompt = "You are an expert environmental data analyst. Generate a report with two sections: 'Overall Comparative Summary' and 'Parameter-Specific Analysis'.\n\n"
-    prompt += "In the summary, provide a high-level conclusion comparing the lakes. In the parameter analysis, for each parameter group, explain how it contributes to the differences in health scores across the lakes. Focus on *why* they differ. Use the provided raw values and trends to support your analysis.\n\n"
-    prompt += "### Lake Data Profiles\n"
-
+    prompt = "You are an expert environmental data analyst. Generate a report with two sections: 'Overall Comparative Summary' and 'Parameter-Specific Analysis'.\n\nIn the summary, provide a high-level conclusion comparing the lakes. In the parameter analysis, for each parameter group, explain how it contributes to the differences in health scores across the lakes. Focus on *why* they differ. Use the provided raw values and trends to support your analysis.\n\n### Lake Data Profiles\n"
     latest_year_df = df.loc[df.groupby('Lake_ID')['Year'].idxmax()].set_index('Lake_ID')
     final_weights = get_effective_weights(selected_ui_options, df.columns)
     params_to_process = list(final_weights.keys())
     norm_scores_all = {param: norm(latest_year_df[param]) for param in params_to_process}
-
     for _, row in results.iterrows():
         lake_id = row['Lake_ID']
-        prompt += f"--- Lake {lake_id} ---\n"
-        prompt += f"Final Health Score: {row['Health Score']:.3f} (Rank: {row['Rank']})\n"
+        prompt += f"--- Lake {lake_id} ---\n"; prompt += f"Final Health Score: {row['Health Score']:.3f} (Rank: {row['Rank']})\n"
         lake_latest_data = latest_year_df.loc[lake_id]
         for param in params_to_process:
             props = PARAMETER_PROPERTIES[param]; raw_value = lake_latest_data[param]
@@ -188,15 +152,10 @@ def build_detailed_ai_prompt(results, df, selected_ui_options):
                     prompt += f", Trend: {trend_dir} ({trend_impact})\n"
                 else: prompt += ", Trend: N/A\n"
             else: prompt += "\n"
-    
-    prompt += "\n### Required Analysis\n"
-    prompt += "1.  **Overall Comparative Summary:**\n"
-    prompt += "2.  **Parameter-Specific Analysis:** (Provide a bullet point for each selected parameter group)\n"
+    prompt += "\n### Required Analysis\n1.  **Overall Comparative Summary:**\n2.  **Parameter-Specific Analysis:** (Provide a bullet point for each selected parameter group)\n"
     return prompt
 
-
 def generate_ai_insight_combined(prompt):
-    # This function remains robust
     API_KEY = st.secrets.get("OPENROUTER_API_KEY")
     if not API_KEY: return "API Key not found."
     API_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -209,12 +168,10 @@ def generate_ai_insight_combined(prompt):
     except requests.exceptions.RequestException as e: return f"Network error: {e}"
     except (KeyError, IndexError): return "Failed to parse AI response."
 
-
 def generate_grouped_plots_by_metric(df, lake_ids, metrics):
-    # This function remains robust
     grouped_images = []
     for metric in metrics:
-        plt.figure(figsize=(10, 6), dpi=150)
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=150) # **NEW**: Get axis object
         has_data = False
         for lake_id in lake_ids:
             lake_df = df[df['Lake_ID'] == lake_id].copy()
@@ -222,18 +179,21 @@ def generate_grouped_plots_by_metric(df, lake_ids, metrics):
                 lake_df = lake_df.sort_values("Year")
                 lake_df[metric] = pd.to_numeric(lake_df[metric], errors='coerce')
                 if lake_df[metric].notna().sum() > 0:
-                    plt.plot(lake_df["Year"], lake_df[metric], marker='o', linestyle='-', label=f"Lake {lake_id}")
+                    ax.plot(lake_df["Year"], lake_df[metric], marker='o', linestyle='-', label=f"Lake {lake_id}")
                     has_data = True
                 if lake_df[metric].notna().sum() > 1:
                     x = lake_df["Year"][lake_df[metric].notna()]; y = lake_df[metric][lake_df[metric].notna()]
-                    slope, intercept, *_ = linregress(x, y); plt.plot(x, intercept + slope * x, linestyle='--', alpha=0.7)
-        if not has_data: plt.close(); continue
-        plt.title(f"{metric} Over Time", fontsize=14); plt.xlabel("Year", fontsize=12); plt.ylabel(metric, fontsize=12)
-        plt.legend(); plt.grid(True, which='both', linestyle='--', linewidth=0.5); plt.tight_layout()
-        buf = BytesIO(); plt.savefig(buf, format='png', bbox_inches='tight'); plt.close(); buf.seek(0)
+                    slope, intercept, *_ = linregress(x, y); ax.plot(x, intercept + slope * x, linestyle='--', alpha=0.7)
+        if not has_data:
+            plt.close(fig); continue
+        # **FIX**: Set x-axis ticks to be integers only.
+        ax.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+        ax.set_title(f"{metric} Over Time", fontsize=14); ax.set_xlabel("Year", fontsize=12); ax.set_ylabel(metric, fontsize=12)
+        ax.legend(); ax.grid(True, which='both', linestyle='--', linewidth=0.5); fig.tight_layout()
+        buf = BytesIO(); fig.savefig(buf, format='png'); plt.close(fig); buf.seek(0)
         grouped_images.append((metric, buf))
     return grouped_images
-
 
 def generate_comparative_pdf_report(df, results, calc_details, lake_ids, selected_ui_options):
     """
@@ -242,84 +202,61 @@ def generate_comparative_pdf_report(df, results, calc_details, lake_ids, selecte
     buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=A4); width, height = A4
     y = height - 40; margin = 40
 
+    # --- NEW: PDF Layout Helper Functions for clean, non-overlapping text ---
     def check_page_break(required_height):
         nonlocal y
         if y - required_height < margin:
-            c.showPage()
-            y = height - margin
-            return True
-        return False
-
-    def writeln(text, step=16, x=40, font_name="Helvetica", font_size=10):
-        nonlocal y
-        c.setFont(font_name, font_size)
-        lines = []
-        for line in text.split('\n'):
-            lines.extend(line[i:i+95] for i in range(0, len(line), 95))
-        
-        required_height = len(lines) * step
-        check_page_break(required_height)
-        
-        for line in lines:
-            c.drawString(x, y, line)
-            y -= step
-        return y
+            c.showPage(); y = height - margin
     
-    writeln("Dynamic Lake Health Report", font_size=20, font_name="Helvetica-Bold", x=width/2-100)
-    y -= 10
-    writeln(f"Lakes Analyzed: {', '.join(map(str, lake_ids))}", font_size=12)
-    writeln(f"Parameters Considered: {', '.join(selected_ui_options)}", font_size=12)
-    y -= 5
-    final_weights = get_effective_weights(selected_ui_options, df.columns)
-    writeln("Effective Weights Used:", font_size=12, font_name="Helvetica-Bold")
-    for param, weight in sorted(final_weights.items()):
-        writeln(f"- {param}: {weight:.3f}")
+    def write_left_aligned(text, step=15, font_name="Helvetica", font_size=10, x=margin):
+        nonlocal y; c.setFont(font_name, font_size)
+        lines = [];
+        for line in text.split('\n'): lines.extend(line[i:i+95] for i in range(0, len(line), 95))
+        required_height = len(lines) * step; check_page_break(required_height)
+        for line in lines: c.drawString(x, y, line); y -= step
 
-    check_page_break(len(results) * 30 + 50)
-    y -= 20
-    writeln("Health Score Ranking", font_size=14, font_name="Helvetica-Bold")
-    bar_start_x = 60; bar_height = 18; max_bar_width = width - bar_start_x - 200 
+    def write_centered(text, step=20, font_name="Helvetica-Bold", font_size=14):
+        nonlocal y; c.setFont(font_name, font_size)
+        check_page_break(step); c.drawCentredString(width / 2, y, text); y -= step
+
+    # --- PDF Content Generation ---
+    write_centered("Dynamic Lake Health Report", font_size=20); y -= 10
+    write_left_aligned(f"Lakes Analyzed: {', '.join(map(str, lake_ids))}", font_size=12)
+    write_left_aligned(f"Parameters Considered: {', '.join(selected_ui_options)}", font_size=12); y -= 10
+    
+    final_weights = get_effective_weights(selected_ui_options, df.columns)
+    write_left_aligned("Effective Weights Used:", font_size=12, font_name="Helvetica-Bold")
+    for param, weight in sorted(final_weights.items()): write_left_aligned(f"- {param}: {weight:.3f}")
+    
+    y -= 20; check_page_break(len(results) * 28 + 40); write_centered("Health Score Ranking")
+    y -= 10; bar_start_x = 60; bar_height = 18; max_bar_width = width - bar_start_x - 200 
     for _, row in results.iterrows():
-        check_page_break(30)
-        score = row['Health Score']; rank = int(row['Rank'])
+        check_page_break(28); score = row['Health Score']; rank = int(row['Rank'])
         if score > 0.75: color = colors.darkgreen
         elif score > 0.5: color = colors.orange
         else: color = colors.firebrick
         c.setFillColor(color); c.rect(bar_start_x, y, score * max_bar_width, bar_height, fill=1, stroke=0)
-        c.setFillColor(colors.black); c.drawString(bar_start_x + 5, y + 5, f"Lake {row['Lake_ID']} (Rank {rank}) - Score: {score:.3f}")
+        c.setFillColor(colors.black); c.drawString(bar_start_x + 5, y + 4, f"Lake {row['Lake_ID']} (Rank {rank}) - Score: {score:.3f}")
         y -= (bar_height + 10)
-    
-    check_page_break(400) # Reserve ample space for AI text
-    c.showPage(); y = height - margin # Start AI section on a new page
-    writeln("AI-Generated Comparative Analysis", font_size=14, font_name="Helvetica-Bold")
-    detailed_prompt = build_detailed_ai_prompt(results, df, selected_ui_options)
-    ai_text = generate_ai_insight_combined(detailed_prompt)
-    writeln(ai_text, step=14)
 
     c.showPage(); y = height - margin
-    writeln("Detailed Calculation Breakdown", font_size=14, font_name="Helvetica-Bold")
+    write_centered("AI-Generated Comparative Analysis")
+    y -= 10
+    detailed_prompt = build_detailed_ai_prompt(results, df, selected_ui_options)
+    ai_text = generate_ai_insight_combined(detailed_prompt); write_left_aligned(ai_text, step=14, font_size=9)
+    
+    c.showPage(); y = height - margin
+    write_centered("Detailed Calculation Breakdown"); y -= 10
     for lake_id in lake_ids:
         table_data = [['Parameter', 'Raw Val', 'Norm Pres.', 'Norm Trend', 'Norm P-Val', 'Factor Score', 'Weight', 'Contrib.']]
         for param, details in sorted(calc_details[lake_id].items()):
-            table_data.append([
-                param[:18], f"{details.get('Raw Value', ''):.2f}",
-                f"{details.get('Norm Pres.', ''):.3f}", f"{details.get('Norm Trend', 'N/A')}" if isinstance(details.get('Norm Trend'), str) else f"{details.get('Norm Trend', ''):.3f}",
-                f"{details.get('Norm P-Val', 'N/A')}" if isinstance(details.get('Norm P-Val'), str) else f"{details.get('Norm P-Val', ''):.3f}",
-                f"{details.get('Factor Score', ''):.3f}", f"{details.get('Weight', ''):.3f}", f"{details.get('Contribution', ''):.3f}",
-            ])
+            table_data.append([param[:18], f"{details.get('Raw Value', ''):.2f}", f"{details.get('Norm Pres.', ''):.3f}", f"{details.get('Norm Trend', 'N/A')}" if isinstance(details.get('Norm Trend'), str) else f"{details.get('Norm Trend', ''):.3f}", f"{details.get('Norm P-Val', 'N/A')}" if isinstance(details.get('Norm P-Val'), str) else f"{details.get('Norm P-Val', ''):.3f}", f"{details.get('Factor Score', ''):.3f}", f"{details.get('Weight', ''):.3f}", f"{details.get('Contribution', ''):.3f}"])
         table = Table(table_data, colWidths=[110, 60, 60, 60, 60, 60, 50, 60])
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.grey), ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 7),
-            ('BOTTOMPADDING', (0,0), (-1,0), 10), ('BACKGROUND', (0,1), (-1,-1), colors.beige),
-            ('GRID', (0,0), (-1,-1), 1, colors.black)
-        ]))
-        table_height = len(table_data) * 16;
-        check_page_break(table_height + 40)
-        y -= 20
-        writeln(f"Breakdown for Lake {lake_id}", font_name="Helvetica-Bold", font_size=12)
+        table.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.grey), ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 7), ('BOTTOMPADDING', (0,0), (-1,0), 10), ('BACKGROUND', (0,1), (-1,-1), colors.beige), ('GRID', (0,0), (-1,-1), 1, colors.black)]))
+        table_height = len(table_data) * 16; check_page_break(table_height + 40)
+        write_left_aligned(f"Breakdown for Lake {lake_id}", font_name="Helvetica-Bold", font_size=12); y -= 5
         table.wrapOn(c, width, height); table.drawOn(c, 30, y - table_height); y -= (table_height + 20)
-
+    
     params_to_plot = sorted([p for p in final_weights.keys() if p != 'HDI'])
     plots = generate_grouped_plots_by_metric(df, lake_ids, params_to_plot)
     for i in range(0, len(plots), 2):
@@ -327,17 +264,12 @@ def generate_comparative_pdf_report(df, results, calc_details, lake_ids, selecte
         for j in range(2):
             if i + j < len(plots):
                 y_pos = height / 2 + 40 if j == 0 else 70; metric, img_buf = plots[i + j]; img = ImageReader(img_buf)
-                check_page_break(300)
-                c.setFont("Helvetica-Bold", 12); c.drawCentredString(width / 2, y_pos + 260, f"Comparison of: {metric}")
+                write_centered(f"Comparison of: {metric}", y_ref=y_pos + 260)
                 c.drawImage(img, 40, y_pos, width=width-80, height=250, preserveAspectRatio=True, anchor='n')
-    
     c.save(); buffer.seek(0); return buffer
 
 # --- STREAMLIT APP LAYOUT ---
-# (The layout code is robust and remains the same)
-
-st.set_page_config(layout="wide")
-st.title("🌊 Dynamic Lake Health Dashboard")
+st.set_page_config(layout="wide"); st.title("🌊 Dynamic Lake Health Dashboard")
 df_health_full, df_location, ui_options = prepare_all_data(HEALTH_DATA_PATH, LOCATION_DATA_PATH)
 if df_health_full is None: st.stop()
 if 'confirmed_parameters' not in st.session_state: st.session_state.confirmed_parameters = []
@@ -371,7 +303,7 @@ with col1:
         map_center = [filtered_lakes_by_loc['Lat'].mean(), filtered_lakes_by_loc['Lon'].mean()]
         m = folium.Map(location=map_center, zoom_start=8); marker_cluster = MarkerCluster().add_to(m)
         for _, row in filtered_lakes_by_loc.iterrows(): folium.Marker([row['Lat'], row['Lon']], popup=f"<b>Lake ID:</b> {row['Lake_ID']}", tooltip=f"Lake ID: {row['Lake_ID']}", icon=folium.Icon(color='blue', icon='water')).add_to(marker_cluster)
-        st_folium(m, height=550, use_container_width=True)
+        st_folium(m, height=600, use_container_width=True)
 with col2:
     st.subheader("Lakes Selected for Analysis"); ids_text = ", ".join(map(str, st.session_state.selected_lake_ids))
     edited_ids_text = st.text_area("Edit Lake IDs (comma-separated)", ids_text, height=80)
@@ -392,7 +324,7 @@ with col2:
                     results, calc_details = calculate_lake_health_score(selected_df, st.session_state.confirmed_parameters)
                     st.session_state.analysis_results = results; st.session_state.calc_details = calc_details
                     try: st.session_state.pdf_buffer = generate_comparative_pdf_report(selected_df, results, calc_details, lake_ids_to_analyze, st.session_state.confirmed_parameters)
-                    except Exception as pdf_e: st.warning(f"⚠️ PDF report failed. Error: {pdf_e}")
+                    except Exception as pdf_e: st.warning(f"⚠️ PDF report failed. Error: {pdf_e}"); st.exception(pdf_e)
             except Exception as e: st.error(f"Critical analysis error: {e}"); st.exception(e)
     st.markdown("---") 
     if st.session_state.analysis_results is not None and not st.session_state.analysis_results.empty:
