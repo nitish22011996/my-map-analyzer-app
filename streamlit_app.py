@@ -276,16 +276,19 @@ def generate_comparative_pdf_report(df, results, calc_details, lake_ids, selecte
         c.showPage(); y = height - 50
         c.setFont("Helvetica-Bold", 12); y = writeln(f"Breakdown for Lake {lake_id}", y_ref=y)
         table_data = [['Parameter', 'Raw Val', 'Norm Pres.', 'Norm Trend', 'Norm P-Val', 'Factor Score', 'Weight', 'Contribution']]
+# --- Replace the old table_data.append() block with this one ---
+
         lake_details = calc_details[lake_id]
         for param, details in lake_details.items():
             row_data = [
-                param[:20], f"{details.get('Raw Value', 'N/A'):.2f}",
+                param[:20], 
+                f"{details.get('Raw Value', 'N/A'):.2f}",
                 f"{details.get('Norm Pres.', 'N/A'):.3f}" if isinstance(details.get('Norm Pres.'), float) else details.get('Norm Pres.', 'N/A'),
-                f"{details.get('Norm Trend', 'N/A'):.3f}" if isinstance(details.get('Norm Trend', float) else details.get('Norm Trend', 'N/A'),
-                f"{details.get('Norm P-Val', 'N/A'):.3f}" if isinstance(details.get('Norm P-Val', float) else details.get('Norm P-Val', 'N/A'),
-                f"{details.get('Factor Score', 'N/A'):.3f}" if isinstance(details.get('Factor Score', float) else details.get('Factor Score', 'N/A'),
-                f"{details.get('Weight', 'N/A'):.3f}" if isinstance(details.get('Weight', float) else details.get('Weight', 'N/A'),
-                f"{details.get('Contribution', 'N/A'):.3f}" if isinstance(details.get('Contribution', float) else details.get('Contribution', 'N/A'),
+                f"{details.get('Norm Trend', 'N/A'):.3f}" if isinstance(details.get('Norm Trend'), float) else details.get('Norm Trend', 'N/A'),
+                f"{details.get('Norm P-Val', 'N/A'):.3f}" if isinstance(details.get('Norm P-Val'), float) else details.get('Norm P-Val', 'N/A'),
+                f"{details.get('Factor Score', 'N/A'):.3f}" if isinstance(details.get('Factor Score'), float) else details.get('Factor Score', 'N/A'),
+                f"{details.get('Weight', 'N/A'):.3f}" if isinstance(details.get('Weight'), float) else details.get('Weight', 'N/A'),
+                f"{details.get('Contribution', 'N/A'):.3f}" if isinstance(details.get('Contribution'), float) else details.get('Contribution', 'N/A'),
             ]
             table_data.append(row_data)
         
