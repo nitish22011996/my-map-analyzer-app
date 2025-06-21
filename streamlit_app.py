@@ -20,7 +20,6 @@ LOCATION_DATA_PATH = 'HDI_lake_district.csv'
 HEALTH_DATA_PATH = "lake_health_data.csv"
 
 # --- PARAMETER DICTIONARY ---
-# **FIX**: Added 'Area' and ensured all parameters are recognized.
 PARAMETER_PROPERTIES = {
     'Air Temperature': {'impact': 'negative', 'type': 'climate'},
     'Evaporation': {'impact': 'negative', 'type': 'climate'},
@@ -39,10 +38,6 @@ LAND_COVER_INTERNAL_COLS = ['Barren Area', 'Urban and Vegetation Area']
 
 @st.cache_data
 def prepare_all_data(health_path, location_path):
-    """
-    Loads, cleans, merges data, and dynamically discovers which parameters are
-    actually available in the loaded files for the UI.
-    """
     try:
         df_health = pd.read_csv(health_path)
         df_location = pd.read_csv(location_path)
@@ -50,12 +45,13 @@ def prepare_all_data(health_path, location_path):
         st.error(f"Data file not found: {e}.")
         return None, None, None
 
-    # **FIX**: Expanded map to include 'Area' and both 'Water_Clarity' variations.
+    # **FIX**: This map is now robust and handles multiple possible names for columns.
     health_col_map = {
         'Air_Temperature': 'Air Temperature', 'Evaporation': 'Evaporation', 'Precipitation': 'Precipitation',
-        'Barren': 'Barren Area', 'Urban and Vegetation': 'Urban and Vegetation Area',
+        'Barren': 'Barren Area', 
+        'Urban and Vegetation': 'Urban and Vegetation Area', 'Urban and Built-up': 'Urban and Vegetation Area',
         'Lake_Water_Surface_Temperature': 'Lake Water Surface Temperature', 
-        'Water_Clarity': 'Water Clarity', 'Water_Clarity(FUI)': 'Water Clarity', # Handles both possible names
+        'Water_Clarity': 'Water Clarity', 'Water_Clarity(FUI)': 'Water Clarity',
         'Area': 'Area'
     }
     df_health = df_health.rename(columns=health_col_map)
@@ -85,21 +81,15 @@ def prepare_all_data(health_path, location_path):
     return df_merged, df_location, sorted(ui_options)
 
 
-def get_effective_weights(selected_ui_options, available_data_cols):
-    """
-    **NEW FUNCTION**: Centralizes the hierarchical weight calculation logic.
-    This is the core fix for the weighting bug.
-    """
+def get_effective_weights(selected_ui_options, all_df_columns):
     effective_weights = {}
     num_main_groups = len(selected_ui_options)
     w_main = 1.0 / num_main_groups if num_main_groups > 0 else 0.0
 
     if "Land Cover" in selected_ui_options:
-        # Find which land cover columns are actually available in the data
-        available_lc_cols_in_data = [p for p in LAND_COVER_INTERNAL_COLS if p in available_data_cols]
+        available_lc_cols_in_data = [p for p in LAND_COVER_INTERNAL_COLS if p in all_df_columns]
         num_land_cover_items = len(available_lc_cols_in_data)
         w_sub_landcover = 1.0 / num_land_cover_items if num_land_cover_items > 0 else 0.0
-        
         for lc_param in available_lc_cols_in_data:
             effective_weights[lc_param] = w_main * w_sub_landcover
     
@@ -115,7 +105,6 @@ def calculate_lake_health_score(df, selected_ui_options):
     def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.5
     def rev_norm(x): return 1.0 - norm(x)
 
-    # **FIX**: Use the new, correct weighting function.
     final_weights = get_effective_weights(selected_ui_options, df.columns)
     params_to_process = list(final_weights.keys())
 
@@ -146,6 +135,57 @@ def calculate_lake_health_score(df, selected_ui_options):
     return latest_year_data.reset_index().sort_values('Rank')
 
 
+def build_detailed_ai_prompt(results, df, selected_ui_options):
+    """
+    **NEW FUNCTION**: Creates a rich, detailed prompt for the AI with raw values,
+    qualitative assessments, and trends.
+    """
+    def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.5
+    
+    prompt = f"Perform a detailed environmental health analysis for the following lakes, based on these selected parameters: {', '.join(selected_ui_options)}.\n\n"
+    prompt += "For each lake, I have provided the raw data, a qualitative assessment (Good/Poor), and the trend. Your task is to synthesize this information into a concise, comparative analysis discussing the key drivers of each lake's health score.\n\n"
+
+    latest_year_df = df.loc[df.groupby('Lake_ID')['Year'].idxmax()]
+
+    for _, row in results.iterrows():
+        lake_id = row['Lake_ID']
+        prompt += f"--- Lake {lake_id} ---\n"
+        prompt += f"Final Health Score: {row['Health Score']:.3f} (Rank: {row['Rank']})\n"
+        
+        lake_latest_data = latest_year_df[latest_year_df['Lake_ID'] == lake_id].iloc[0]
+        
+        final_weights = get_effective_weights(selected_ui_options, df.columns)
+        params_to_process = list(final_weights.keys())
+
+        for param in params_to_process:
+            props = PARAMETER_PROPERTIES[param]
+            raw_value = lake_latest_data[param]
+            
+            # Qualitative assessment
+            norm_score = norm(latest_year_df[param])
+            is_good = (norm_score > 0.5) if props['impact'] == 'positive' else (norm_score < 0.5)
+            assessment = "Good" if is_good else "Poor"
+
+            prompt += f"- {param}: {raw_value:.2f} ({assessment})"
+
+            # Trend assessment
+            if param != 'HDI':
+                lake_history = df[df['Lake_ID'] == lake_id]
+                if len(lake_history['Year'].unique()) > 1:
+                    slope = linregress(lake_history['Year'], lake_history[param]).slope
+                    trend_dir = "Increasing" if slope > 0 else "Decreasing" if slope < 0 else "Stable"
+                    trend_impact = "Positive" if (slope > 0 and props['impact'] == 'positive') or (slope < 0 and props['impact'] == 'negative') else "Negative"
+                    prompt += f", Trend: {trend_dir} ({trend_impact})\n"
+                else:
+                    prompt += ", Trend: N/A\n"
+            else:
+                prompt += "\n"
+    
+    prompt += "\n--- End of Data ---\n\n"
+    prompt += "Analysis Task: Compare the lakes. Which factors are most responsible for the differences in their health scores? What are the overall prospects for each lake based on the trends? Be specific and use the data provided."
+    return prompt
+
+
 def generate_ai_insight_combined(prompt):
     API_KEY = st.secrets.get("OPENROUTER_API_KEY")
     if not API_KEY: return "API Key not found."
@@ -153,7 +193,7 @@ def generate_ai_insight_combined(prompt):
     headers = {"Authorization": f"Bearer {API_KEY}"}
     data = {"model": "deepseek/deepseek-chat:free", "messages": [{"role": "user", "content": prompt}]}
     try:
-        response = requests.post(API_URL, json=data, headers=headers, timeout=60)
+        response = requests.post(API_URL, json=data, headers=headers, timeout=90)
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
     except requests.exceptions.RequestException as e: return f"Network error: {e}"
@@ -161,6 +201,7 @@ def generate_ai_insight_combined(prompt):
 
 
 def generate_grouped_plots_by_metric(df, lake_ids, metrics):
+    # This function remains robust and correct
     grouped_images = []
     for metric in metrics:
         plt.figure(figsize=(10, 6), dpi=150)
@@ -199,7 +240,6 @@ def generate_comparative_pdf_report(df, results, lake_ids, selected_ui_options):
     writeln(f"Lakes Analyzed: {', '.join(map(str, lake_ids))}")
     writeln(f"Parameters Considered: {', '.join(selected_ui_options)}")
     
-    # **FIX**: Use the centralized weight function for accurate display.
     y -= 10; c.setFont("Helvetica-Bold", 14); writeln("Effective Weights Used:"); c.setFont("Helvetica", 10)
     final_weights = get_effective_weights(selected_ui_options, df.columns)
     for param, weight in final_weights.items():
@@ -218,15 +258,12 @@ def generate_comparative_pdf_report(df, results, lake_ids, selected_ui_options):
         c.setFillColor(colors.black); c.drawString(bar_start_x + 5, y + 5, f"Lake {row['Lake_ID']} (Rank {rank}) - Score: {score:.3f}")
         y -= (bar_height + 10)
     
-    if y < 250: c.showPage(); y = height - 50
+    if y < 300: c.showPage(); y = height - 50 # Ensure more space for AI text
     c.setFont("Helvetica-Bold", 14); writeln("AI-Generated Analysis"); c.setFont("Helvetica", 10)
-    prompt = f"Based on ({', '.join(selected_ui_options)}), analyze lakes: {', '.join(map(str, lake_ids))}.\n"
-    for _, row in results.iterrows(): prompt += f"- Lake {row['Lake_ID']}: Score {row['Health Score']:.3f}, Rank {int(row['Rank'])}.\n"
-    prompt += "\nDiscuss factors and compare their health. Be concise."
-    writeln(generate_ai_insight_combined(prompt))
+    detailed_prompt = build_detailed_ai_prompt(results, df, selected_ui_options)
+    writeln(generate_ai_insight_combined(detailed_prompt))
     
-    params_to_plot = list(final_weights.keys())
-    if 'HDI' in params_to_plot: params_to_plot.remove('HDI')
+    params_to_plot = [p for p in final_weights.keys() if p != 'HDI']
     plots = generate_grouped_plots_by_metric(df, lake_ids, params_to_plot)
     for i in range(0, len(plots), 2):
         c.showPage()
