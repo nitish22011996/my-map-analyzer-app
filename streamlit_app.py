@@ -83,18 +83,15 @@ def get_effective_weights(selected_ui_options, all_df_columns):
     effective_weights = {}
     num_main_groups = len(selected_ui_options)
     w_main = 1.0 / num_main_groups if num_main_groups > 0 else 0.0
-
     if "Land Cover" in selected_ui_options:
         available_lc_cols_in_data = [p for p in LAND_COVER_INTERNAL_COLS if p in all_df_columns]
         num_land_cover_items = len(available_lc_cols_in_data)
         w_sub_landcover = 1.0 / num_land_cover_items if num_land_cover_items > 0 else 0.0
         for lc_param in available_lc_cols_in_data:
             effective_weights[lc_param] = w_main * w_sub_landcover
-    
     for param in selected_ui_options:
         if param != "Land Cover":
             effective_weights[param] = w_main
-            
     return effective_weights
 
 
@@ -105,17 +102,13 @@ def calculate_lake_health_score(df, selected_ui_options):
 
     final_weights = get_effective_weights(selected_ui_options, df.columns)
     params_to_process = list(final_weights.keys())
-
     latest_year_data = df.loc[df.groupby('Lake_ID')['Year'].idxmax()].copy().set_index('Lake_ID')
     total_score = pd.Series(0.0, index=latest_year_data.index)
-
     for param in params_to_process:
         props = PARAMETER_PROPERTIES[param]
         df[param] = pd.to_numeric(df[param], errors='coerce').fillna(0)
-        
         latest_values = latest_year_data[param]
         present_value_score = norm(latest_values) if props['impact'] == 'positive' else rev_norm(latest_values)
-        
         if param == 'HDI':
             factor_score = present_value_score
         else:
@@ -124,16 +117,16 @@ def calculate_lake_health_score(df, selected_ui_options):
             slope_norm = norm(slopes) if props['impact'] == 'positive' else rev_norm(slopes)
             p_value_norm = 1.0 - norm(p_values)
             factor_score = (present_value_score + slope_norm + p_value_norm) / 3.0
-        
         total_score += final_weights[param] * factor_score
-
     latest_year_data['Health Score'] = total_score
     latest_year_data['Rank'] = latest_year_data['Health Score'].rank(ascending=False, method='min').astype(int)
-    
     return latest_year_data.reset_index().sort_values('Rank')
 
 
 def build_detailed_ai_prompt(results, df, selected_ui_options):
+    """
+    Creates a rich, detailed prompt for the AI with robust handling for single-lake analysis.
+    """
     def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.5
     
     prompt = f"Perform a detailed environmental health analysis for the following lakes, based on these selected parameters: {', '.join(selected_ui_options)}.\n\n"
@@ -142,31 +135,29 @@ def build_detailed_ai_prompt(results, df, selected_ui_options):
     latest_year_df = df.loc[df.groupby('Lake_ID')['Year'].idxmax()].set_index('Lake_ID')
     final_weights = get_effective_weights(selected_ui_options, df.columns)
     params_to_process = list(final_weights.keys())
-
-    # Pre-calculate normalized scores for all lakes at once
     norm_scores_all = {param: norm(latest_year_df[param]) for param in params_to_process}
 
     for _, row in results.iterrows():
         lake_id = row['Lake_ID']
         prompt += f"--- Lake {lake_id} ---\n"
         prompt += f"Final Health Score: {row['Health Score']:.3f} (Rank: {row['Rank']})\n"
-        
         lake_latest_data = latest_year_df.loc[lake_id]
         
         for param in params_to_process:
             props = PARAMETER_PROPERTIES[param]
             raw_value = lake_latest_data[param]
             
-            # ** THE FIX IS HERE: Select the single score for the current lake **
-            single_norm_score = norm_scores_all[param].loc[lake_id]
-            
-            # Qualitative assessment based on the single score
+            # ** THE FIX IS HERE: Handle both Series and float return types from norm() **
+            norm_result = norm_scores_all[param]
+            if isinstance(norm_result, pd.Series):
+                single_norm_score = norm_result.loc[lake_id]
+            else: # It's a float (e.g., 0.5) because there was no variation
+                single_norm_score = norm_result
+
             is_good = (single_norm_score > 0.5) if props['impact'] == 'positive' else (single_norm_score < 0.5)
             assessment = "Good" if is_good else "Poor"
-
             prompt += f"- {param}: {raw_value:.2f} ({assessment})"
 
-            # Trend assessment
             if param != 'HDI':
                 lake_history = df[df['Lake_ID'] == lake_id]
                 if len(lake_history['Year'].unique()) > 1:
