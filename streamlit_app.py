@@ -20,6 +20,7 @@ LOCATION_DATA_PATH = 'HDI_lake_district.csv'
 HEALTH_DATA_PATH = "lake_health_data.csv"
 
 # --- PARAMETER DICTIONARY ---
+# Defines properties for the actual data columns
 PARAMETER_PROPERTIES = {
     'Air Temperature': {'impact': 'negative', 'type': 'climate'},
     'Evaporation': {'impact': 'negative', 'type': 'climate'},
@@ -30,7 +31,8 @@ PARAMETER_PROPERTIES = {
     'Urban and Vegetation Area': {'impact': 'negative', 'type': 'land_cover'},
     'HDI': {'impact': 'positive', 'type': 'socioeconomic'}
 }
-LAND_COVER_PARAMS = [p for p, props in PARAMETER_PROPERTIES.items() if props['type'] == 'land_cover']
+# Defines the internal data columns that belong to the "Land Cover" UI option
+LAND_COVER_INTERNAL_COLS = ['Barren Area', 'Urban and Vegetation Area']
 
 
 # --- FUNCTION DEFINITIONS ---
@@ -39,13 +41,13 @@ LAND_COVER_PARAMS = [p for p, props in PARAMETER_PROPERTIES.items() if props['ty
 def prepare_all_data(health_path, location_path):
     """
     Loads, cleans, merges data, and dynamically discovers which parameters are
-    actually available in the loaded files.
+    actually available in the loaded files for the UI.
     """
     try:
         df_health = pd.read_csv(health_path)
         df_location = pd.read_csv(location_path)
     except FileNotFoundError as e:
-        st.error(f"Data file not found: {e}. Please ensure file paths are correct.")
+        st.error(f"Data file not found: {e}.")
         return None, None, None
 
     health_col_map = {
@@ -58,45 +60,59 @@ def prepare_all_data(health_path, location_path):
     potential_id_cols = ['Lake_ID', 'Lake_id', 'lake_id']
     health_id_col = next((col for col in potential_id_cols if col in df_health.columns), None)
     loc_id_col = next((col for col in potential_id_cols if col in df_location.columns), None)
-    
     if not health_id_col or not loc_id_col:
         st.error(f"Critical Error: Could not find a lake identifier column in one or both CSV files.")
         return None, None, None
-    
     df_health = df_health.rename(columns={health_id_col: 'Lake_ID'})
     df_location = df_location.rename(columns={loc_id_col: 'Lake_ID'})
 
     df_health['Lake_ID'] = pd.to_numeric(df_health['Lake_ID'], errors='coerce').dropna().astype(int)
     df_location['Lake_ID'] = pd.to_numeric(df_location['Lake_ID'], errors='coerce').dropna().astype(int)
-    
     location_subset = df_location[['Lake_ID', 'HDI']].copy()
     df_merged = pd.merge(df_health, location_subset, on='Lake_ID', how='left')
 
-    available_params = [col for col in df_merged.columns if col in PARAMETER_PROPERTIES]
+    # Dynamically build the list of UI options based on available data
+    available_data_cols = [col for col in df_merged.columns if col in PARAMETER_PROPERTIES]
+    ui_options = [p for p in available_data_cols if p not in LAND_COVER_INTERNAL_COLS]
     
-    if not available_params:
-        st.error("No valid analysis parameters found in the data files. Please check column names.")
+    # Check if any land cover columns are present to create the single "Land Cover" option
+    if any(p in available_data_cols for p in LAND_COVER_INTERNAL_COLS):
+        ui_options.append("Land Cover")
+        
+    if not ui_options:
+        st.error("No valid analysis parameters found in the data files.")
         return None, None, None
 
-    return df_merged, df_location, available_params
+    return df_merged, df_location, sorted(ui_options)
 
 
-def calculate_lake_health_score(df, selected_parameters):
-    if not selected_parameters: return pd.DataFrame()
-    def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.0
+def calculate_lake_health_score(df, selected_ui_options):
+    if not selected_ui_options: return pd.DataFrame()
+    def norm(x): return (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.5
     def rev_norm(x): return 1.0 - norm(x)
 
-    selected_land_cover = [p for p in selected_parameters if p in LAND_COVER_PARAMS]
-    selected_other_params = [p for p in selected_parameters if p not in LAND_COVER_PARAMS]
-    num_main_groups = len(selected_other_params) + (1 if selected_land_cover else 0)
+    # Determine which actual data columns to process
+    params_to_process = []
+    if "Land Cover" in selected_ui_options:
+        # Find which land cover columns are actually available in the dataframe
+        available_lc_cols = [p for p in LAND_COVER_INTERNAL_COLS if p in df.columns]
+        params_to_process.extend(available_lc_cols)
+    for p in selected_ui_options:
+        if p != "Land Cover":
+            params_to_process.append(p)
+
+    # Hierarchical Weighting
+    num_main_groups = len(selected_ui_options)
     w_main = 1.0 / num_main_groups if num_main_groups > 0 else 0.0
-    num_land_cover_items = len(selected_land_cover)
+    
+    available_lc_cols = [p for p in LAND_COVER_INTERNAL_COLS if p in df.columns]
+    num_land_cover_items = len(available_lc_cols)
     w_sub_landcover = 1.0 / num_land_cover_items if num_land_cover_items > 0 else 0.0
 
     latest_year_data = df.loc[df.groupby('Lake_ID')['Year'].idxmax()].copy().set_index('Lake_ID')
     total_score = pd.Series(0.0, index=latest_year_data.index)
 
-    for param in selected_parameters:
+    for param in params_to_process:
         props = PARAMETER_PROPERTIES[param]
         df[param] = pd.to_numeric(df[param], errors='coerce').fillna(0)
         
@@ -112,12 +128,10 @@ def calculate_lake_health_score(df, selected_parameters):
             p_value_norm = 1.0 - norm(p_values)
             factor_score = (present_value_score + slope_norm + p_value_norm) / 3.0
         
-        final_weight = w_main * w_sub_landcover if param in LAND_COVER_PARAMS else w_main
+        final_weight = w_main * w_sub_landcover if param in LAND_COVER_INTERNAL_COLS else w_main
         total_score += final_weight * factor_score
 
-    # ** THE FIX IS HERE: The total_score is already the final score. Do not normalize it again. **
     latest_year_data['Health Score'] = total_score
-    
     latest_year_data['Rank'] = latest_year_data['Health Score'].rank(ascending=False, method='min').astype(int)
     
     return latest_year_data.reset_index().sort_values('Rank')
@@ -162,16 +176,37 @@ def generate_grouped_plots_by_metric(df, lake_ids, metrics):
     return grouped_images
 
 
-def generate_comparative_pdf_report(df, results, lake_ids, selected_parameters):
+def generate_comparative_pdf_report(df, results, lake_ids, selected_ui_options):
     buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=A4); width, height = A4; y = height - 50
     def writeln(text, step=16):
-        nonlocal y
+        nonlocal y; y_buffer = 20
+        text_lines = []
         for line in text.split('\n'):
-            for wrapped_line in [line[i:i+95] for i in range(0, len(line), 95)]:
-                if y < 60: c.showPage(); c.setFont("Helvetica", 10); y = height - 50
-                c.drawString(40, y, wrapped_line); y -= step
+            text_lines.extend(line[i:i+95] for i in range(0, len(line), 95))
+        if y - (len(text_lines) * step) < y_buffer: c.showPage(); y = height - 50
+        for line in text_lines: c.drawString(40, y, line); y -= step
+    
     c.setFont("Helvetica-Bold", 20); c.drawCentredString(width / 2, y, "Dynamic Lake Health Report"); y -= 50
-    c.setFont("Helvetica", 12); writeln(f"Lakes Analyzed: {', '.join(map(str, lake_ids))}"); writeln(f"Parameters: {', '.join(selected_parameters)}"); c.showPage(); y = height - 50
+    c.setFont("Helvetica", 12)
+    writeln(f"Lakes Analyzed: {', '.join(map(str, lake_ids))}")
+    writeln(f"Parameters Considered: {', '.join(selected_ui_options)}")
+    
+    # --- Weight Calculation for PDF ---
+    num_main_groups = len(selected_ui_options)
+    w_main = 1.0 / num_main_groups if num_main_groups > 0 else 0.0
+    available_lc_cols = [p for p in LAND_COVER_INTERNAL_COLS if p in df.columns]
+    num_land_cover_items = len(available_lc_cols)
+    w_sub_landcover = 1.0 / num_land_cover_items if num_land_cover_items > 0 else 0.0
+    
+    y -= 10; c.setFont("Helvetica-Bold", 14); writeln("Effective Weights Used:"); c.setFont("Helvetica", 10)
+    for param in selected_ui_options:
+        if param == "Land Cover":
+            for lc_param in available_lc_cols:
+                writeln(f"- {lc_param}: {w_main * w_sub_landcover:.3f}")
+        else:
+            writeln(f"- {param}: {w_main:.3f}")
+
+    c.showPage(); y = height - 50
     c.setFont("Helvetica-Bold", 14); writeln("Health Score Ranking")
     bar_start_x = 60; bar_height = 18; max_bar_width = width - bar_start_x - 200 
     for _, row in results.iterrows():
@@ -183,14 +218,20 @@ def generate_comparative_pdf_report(df, results, lake_ids, selected_parameters):
         c.setFillColor(color); c.rect(bar_start_x, y, score * max_bar_width, bar_height, fill=1, stroke=0)
         c.setFillColor(colors.black); c.drawString(bar_start_x + 5, y + 5, f"Lake {row['Lake_ID']} (Rank {rank}) - Score: {score:.3f}")
         y -= (bar_height + 10)
+    
     if y < 250: c.showPage(); y = height - 50
     c.setFont("Helvetica-Bold", 14); writeln("AI-Generated Analysis"); c.setFont("Helvetica", 10)
-    prompt = f"Based on ({', '.join(selected_parameters)}), analyze lakes: {', '.join(map(str, lake_ids))}.\n"
+    prompt = f"Based on ({', '.join(selected_ui_options)}), analyze lakes: {', '.join(map(str, lake_ids))}.\n"
     for _, row in results.iterrows(): prompt += f"- Lake {row['Lake_ID']}: Score {row['Health Score']:.3f}, Rank {int(row['Rank'])}.\n"
     prompt += "\nDiscuss factors and compare their health. Be concise."
     writeln(generate_ai_insight_combined(prompt))
-    time_series_params = [p for p in selected_parameters if p != 'HDI']
-    plots = generate_grouped_plots_by_metric(df, lake_ids, time_series_params)
+    
+    params_to_plot = []
+    if "Land Cover" in selected_ui_options: params_to_plot.extend(available_lc_cols)
+    for p in selected_ui_options:
+        if p != "Land Cover" and p != "HDI": params_to_plot.append(p)
+
+    plots = generate_grouped_plots_by_metric(df, lake_ids, params_to_plot)
     for i in range(0, len(plots), 2):
         c.showPage()
         for j in range(2):
@@ -198,6 +239,7 @@ def generate_comparative_pdf_report(df, results, lake_ids, selected_parameters):
                 y_pos = height / 2 + 20 if j == 0 else 50; metric, img_buf = plots[i + j]; img = ImageReader(img_buf)
                 c.setFont("Helvetica-Bold", 12); c.drawCentredString(width / 2, y_pos + 280, f"Comparison of: {metric}")
                 c.drawImage(img, 40, y_pos, width=width-80, height=270, preserveAspectRatio=True, anchor='n')
+    
     c.save(); buffer.seek(0); return buffer
 
 # --- STREAMLIT APP LAYOUT ---
@@ -205,7 +247,7 @@ def generate_comparative_pdf_report(df, results, lake_ids, selected_parameters):
 st.set_page_config(layout="wide")
 st.title("🌊 Dynamic Lake Health Dashboard")
 
-df_health_full, df_location, available_params = prepare_all_data(HEALTH_DATA_PATH, LOCATION_DATA_PATH)
+df_health_full, df_location, ui_options = prepare_all_data(HEALTH_DATA_PATH, LOCATION_DATA_PATH)
 if df_health_full is None: st.stop()
 
 if 'confirmed_parameters' not in st.session_state: st.session_state.confirmed_parameters = []
@@ -214,11 +256,7 @@ if 'analysis_results' not in st.session_state: st.session_state.analysis_results
 
 with st.sidebar:
     st.header("1. Select & Set Parameters")
-    temp_selected_params = st.multiselect(
-        "Choose parameters for health score:",
-        options=available_params,
-        default=st.session_state.get('confirmed_parameters', [])
-    )
+    temp_selected_params = st.multiselect("Choose parameters for health score:", options=ui_options, default=st.session_state.get('confirmed_parameters', []))
     if st.button("Set Parameters"):
         st.session_state.confirmed_parameters = temp_selected_params
         st.session_state.analysis_results = None
@@ -268,7 +306,7 @@ with col2:
         with st.spinner("Analyzing..."):
             try:
                 selected_df = df_health_full[df_health_full["Lake_ID"].isin(lake_ids_to_analyze)].copy()
-                if selected_df.empty: st.error(f"No health data found for Lake IDs: {lake_ids_to_analyze}")
+                if selected_df.empty: st.error(f"No health data for Lake IDs: {lake_ids_to_analyze}")
                 else:
                     results = calculate_lake_health_score(selected_df, st.session_state.confirmed_parameters)
                     st.session_state.analysis_results = results
