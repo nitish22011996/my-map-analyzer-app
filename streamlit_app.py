@@ -31,10 +31,10 @@ HEALTH_DATA_PATH = "lake_health_data.csv"
 # --- PARAMETER DICTIONARY ---
 PARAMETER_PROPERTIES = {
     'Air Temperature': {'impact': 'negative', 'type': 'climate'},
-    'Evaporation': {'impact': 'negative', 'type': 'climate'},
+    'Evaporation': {'impact': 'positive', 'type': 'climate'},
     'Precipitation': {'impact': 'positive', 'type': 'climate'},
     'Lake Water Surface Temperature': {'impact': 'negative', 'type': 'water_quality'},
-    'Water Clarity': {'impact': 'positive', 'type': 'water_quality'},
+    'Water Clarity': {'impact': 'negative', 'type': 'water_quality'},
     'Barren Area': {'impact': 'negative', 'type': 'land_cover'},
     'Urban Area': {'impact': 'negative', 'type': 'land_cover'},
     'Vegetation Area': {'impact': 'positive', 'type': 'land_cover'},
