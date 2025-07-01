@@ -324,48 +324,142 @@ def plot_radar_chart(calc_details, lake_ids_tuple):
     buf = BytesIO(); plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.3); plt.close(fig)
     return "Figure 1: Lake Health Fingerprint", buf, False
 
+# --- ADD THESE THREE FUNCTIONS TO YOUR SCRIPT ---
+
 @st.cache_data
-def plot_health_score_evolution(_df, confirmed_params, lake_ids_tuple):
+def plot_health_score_evolution_globally_normalized(_df, confirmed_params, lake_ids_tuple, start_year=2005):
+    """
+    (NEW FOR STREAMLIT)
+    Generates a multi-panel plot showing the health score evolution for several lakes
+    from a specific start year, with scores normalized on a global 0-1 scale for
+    that period to enhance comparability.
+    """
     historical_scores = calculate_historical_scores(_df, confirmed_params, lake_ids_tuple)
     if historical_scores.empty: return None, None, None
-    
+
+    recent_historical_scores = historical_scores[historical_scores['Year'] >= start_year].copy()
+    if recent_historical_scores.empty: return None, None, None
+
+    global_min_score = recent_historical_scores['Health Score'].min()
+    global_max_score = recent_historical_scores['Health Score'].max()
+
+    if (global_max_score - global_min_score) != 0:
+        recent_historical_scores['Global Normalized Score'] = (recent_historical_scores['Health Score'] - global_min_score) / (global_max_score - global_min_score)
+    else:
+        recent_historical_scores['Global Normalized Score'] = 0.5
+
     lake_ids = sorted(list(lake_ids_tuple))
     n_lakes = len(lake_ids)
     ncols = min(n_lakes, 3); nrows = (n_lakes - 1) // ncols + 1
     fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 3.5 * nrows), dpi=150, sharey=True)
     axes = np.array(axes).flatten()
+
     for i, lake_id in enumerate(lake_ids):
         ax = axes[i]
-        lake_data = historical_scores[historical_scores['Lake_ID'] == lake_id]
-        ax.plot(lake_data['Year'], lake_data['Health Score'], marker='o', linestyle='-')
-        ax.set_title(f"Lake {lake_id}"); ax.grid(True, linestyle='--', alpha=0.6)
-        ax.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=5))
-    fig.suptitle('Evolution of Overall Lake Health Score', fontsize=20, y=0.98)
-    fig.supxlabel('Year', fontsize=14); fig.supylabel('Health Score', fontsize=14, x=0.01)
+        lake_data = recent_historical_scores[recent_historical_scores['Lake_ID'] == lake_id]
+        if not lake_data.empty:
+            ax.plot(lake_data['Year'], lake_data['Global Normalized Score'], marker='o', linestyle='-')
+            ax.set_title(f"Lake {lake_id}")
+            ax.grid(True, linestyle='--', alpha=0.6)
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=5))
+        else:
+            ax.set_title(f"Lake {lake_id} (No Data)")
+
+    for ax in axes: ax.set_ylim(-0.05, 1.05)
+    fig.suptitle(f'Globally Normalized Lake Health ({start_year}-Present)', fontsize=20, y=0.98)
+    fig.supxlabel('Year', fontsize=14); fig.supylabel('Normalized Health Score (Global)', fontsize=14, x=0.01)
     for i in range(n_lakes, len(axes)): axes[i].set_visible(False)
     fig.tight_layout(pad=2.0, h_pad=3.0, w_pad=2.0, rect=[0.03, 0.03, 1, 0.95]);
     buf = BytesIO(); plt.savefig(buf, format='png'); plt.close(fig)
-    return "Figure 2: Evolution of Overall Health Score", buf, False
+    return f"Figure 2: Globally Normalized Health ({start_year}-Present)", buf, False
 
 @st.cache_data
-def plot_holistic_trajectory_matrix(_df, _results, confirmed_params, lake_ids_tuple):
+def plot_self_normalized_evolution(_df, confirmed_params, lake_ids_tuple, start_year=2005):
+    """
+    (NEW FOR STREAMLIT)
+    Generates individual plots for each lake's self-normalized journey.
+    """
+    historical_scores = calculate_historical_scores(_df, confirmed_params, lake_ids_tuple)
+    if historical_scores.empty: return []
+
+    recent_historical_scores = historical_scores[historical_scores['Year'] >= start_year].copy()
+    if recent_historical_scores.empty: return []
+
+    recent_historical_scores['Normalized Score'] = recent_historical_scores.groupby('Lake_ID')['Health Score'].transform(
+        lambda x: (x - x.min()) / (x.max() - x.min()) if (x.max() - x.min()) != 0 else 0.5
+    )
+
+    image_list = []
+    for lake_id in sorted(list(lake_ids_tuple)):
+        fig, ax = plt.subplots(figsize=(8, 5), dpi=120)
+        lake_data = recent_historical_scores[recent_historical_scores['Lake_ID'] == lake_id]
+        if lake_data.empty:
+            plt.close(fig)
+            continue
+
+        ax.plot(lake_data['Year'], lake_data['Normalized Score'], marker='o', linestyle='-', color='darkgreen')
+        if len(lake_data) > 1:
+            worst = lake_data.loc[lake_data['Normalized Score'].idxmin()]
+            best = lake_data.loc[lake_data['Normalized Score'].idxmax()]
+            ax.annotate(f"Worst: {int(worst['Year'])}", (worst['Year'], worst['Normalized Score']), xytext=(0, -15), textcoords="offset points", ha='center', arrowprops=dict(arrowstyle="->", color='red'))
+            ax.annotate(f"Best: {int(best['Year'])}", (best['Year'], best['Normalized Score']), xytext=(0, 15), textcoords="offset points", ha='center', arrowprops=dict(arrowstyle="->", color='blue'))
+
+        ax.set_title(f"Recent Health Trajectory for Lake {lake_id}", fontsize=16)
+        ax.set_ylim(-0.15, 1.15)
+        ax.grid(True, linestyle='--', alpha=0.6)
+        fig.tight_layout()
+        buf = BytesIO(); plt.savefig(buf, format='png'); plt.close(fig)
+        image_list.append((f"Self-Normalized Journey: Lake {lake_id}", buf, True)) # Mark as grouped
+    return image_list
+
+# REPLACE the existing 'plot_holistic_trajectory_matrix_normalized' with this complete, corrected version:
+
+@st.cache_data
+def plot_holistic_trajectory_matrix_normalized(_df, _results, confirmed_params, lake_ids_tuple, start_year=2005):
+    """
+    (CORRECTED FOR STREAMLIT)
+    Generates a normalized holistic trajectory matrix with quadrant labels.
+    """
     historical_scores = calculate_historical_scores(_df, confirmed_params, lake_ids_tuple)
     if historical_scores.empty: return None, None, None
-    trends = historical_scores.groupby('Lake_ID').apply(lambda x: linregress(x['Year'], x['Health Score']).slope if len(x['Year'].unique()) > 1 else 0)
-    plot_df = _results.set_index('Lake_ID').copy(); plot_df['Overall Trend'] = trends
+
+    recent_historical_scores = historical_scores[historical_scores['Year'] >= start_year].copy()
+    if recent_historical_scores.empty: return None, None, None
+    
+    recent_trends = recent_historical_scores.groupby('Lake_ID').apply(lambda x: linregress(x['Year'], x['Health Score']).slope if len(x['Year'].unique()) > 1 else 0)
+    plot_df = _results.set_index('Lake_ID').copy()
+    plot_df['Recent Trend'] = recent_trends
+    plot_df.dropna(subset=['Recent Trend', 'Health Score'], inplace=True)
+
+    score_min, score_max = plot_df['Health Score'].min(), plot_df['Health Score'].max()
+    plot_df['Normalized Status'] = (plot_df['Health Score'] - score_min) / (score_max - score_min) if score_max != score_min else 0.5
+
     fig, ax = plt.subplots(figsize=(10, 8), dpi=150)
-    sns.scatterplot(data=plot_df, x='Health Score', y='Overall Trend', hue=plot_df.index.astype(str), s=150, palette='viridis', legend=False, ax=ax)
-    for i, row in plot_df.iterrows(): ax.text(row['Health Score'] + 0.005, row['Overall Trend'], f"Lake {i}", fontsize=9)
-    avg_score = plot_df['Health Score'].mean()
-    ax.axhline(0, ls='--', color='gray'); ax.axvline(avg_score, ls='--', color='gray')
-    ax.set_title('Holistic Lake Trajectory Analysis', fontsize=16, pad=20)
-    ax.set_xlabel('Latest Health Score (Status)', fontsize=12); ax.set_ylabel('Overall Health Score Trend (Slope)', fontsize=12)
-    plt.text(avg_score + 0.01, ax.get_ylim()[1], 'Healthy & Resilient', ha='left', va='top', color='green', alpha=0.7)
-    plt.text(avg_score + 0.01, ax.get_ylim()[0], 'Healthy but Vulnerable', ha='left', va='bottom', color='orange', alpha=0.7)
-    plt.text(avg_score - 0.01, ax.get_ylim()[1], 'In Recovery', ha='right', va='top', color='blue', alpha=0.7)
-    plt.text(avg_score - 0.01, ax.get_ylim()[0], 'Critical Condition', ha='right', va='bottom', color='red', alpha=0.7)
-    plt.tight_layout(); buf = BytesIO(); plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.3); plt.close(fig)
-    return "Figure 3: Holistic Lake Trajectory", buf, False
+    sns.scatterplot(data=plot_df, x='Normalized Status', y='Recent Trend', hue=plot_df.index.astype(str), s=150, palette='viridis', legend=False, ax=ax)
+    for i, row in plot_df.iterrows(): ax.text(row['Normalized Status'] + 0.01, row['Recent Trend'], f"Lake {i}", fontsize=9)
+    
+    avg_norm_score = plot_df['Normalized Status'].mean()
+    ax.axhline(0, ls='--', color='gray'); ax.axvline(avg_norm_score, ls='--', color='gray')
+    ax.set_title(f'Recent Holistic Lake Trajectory ({start_year}-Present)', fontsize=16, pad=20)
+    ax.set_xlabel('Latest Normalized Health Score (Status)', fontsize=12)
+    ax.set_ylabel(f'Recent Health Score Trend (Slope, {start_year}-Present)', fontsize=12)
+    
+    # --- THIS IS THE MISSING PART THAT HAS BEEN ADDED BACK ---
+    # Get the y-axis limits to place the text correctly at the top and bottom
+    y_lim_bottom, y_lim_top = ax.get_ylim()
+
+    # Add the quadrant labels
+    plt.text(avg_norm_score + 0.01, y_lim_top, 'Healthy & Resilient', ha='left', va='top', color='green', alpha=0.7, fontsize=12)
+    plt.text(avg_norm_score + 0.01, y_lim_bottom, 'Healthy but Vulnerable', ha='left', va='bottom', color='orange', alpha=0.7, fontsize=12)
+    plt.text(avg_norm_score - 0.01, y_lim_top, 'In Recovery', ha='right', va='top', color='blue', alpha=0.7, fontsize=12)
+    plt.text(avg_norm_score - 0.01, y_lim_bottom, 'Critical Condition', ha='right', va='bottom', color='red', alpha=0.7, fontsize=12)
+    # --- END OF ADDED PART ---
+
+    plt.tight_layout(); 
+    buf = BytesIO(); 
+    plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.3); 
+    plt.close(fig)
+    return f"Figure 3: Holistic Trajectory ({start_year}-Present)", buf, False
 
 @st.cache_data
 def plot_hdi_vs_health_correlation(_results, lake_ids_tuple):
@@ -591,15 +685,43 @@ def _draw_report_content(c, bookmark_locations=None):
         if i % 2 == 0 and i + 1 < len(plots): c.line(40, A4[1]*0.5 - 40, A4[0] - 40, A4[1]*0.5 - 40)
     c.showPage()
 
-    # --- Case Study Page ---
+   # PASTE THIS ENTIRE NEW BLOCK IN ITS PLACE:
+
+    # --- Case Study and New Individual Trajectory Pages ---
+    # This part replaces the old "Case Study" section to integrate the new plots
+
+    # First, add the new section for the Self-Normalized plots to the Table of Contents
+    bookmark_locations['self_norm_plots'] = c.getPageNumber()
+    c.bookmarkPage("self_norm_plots")
+    c.addOutlineEntry("Self-Normalized Trajectories", "self_norm_plots", level=0, closed=False)
+
+    # Generate and draw the self-normalized plots (this function returns a list of images)
+    self_norm_plots = plot_self_normalized_evolution(df, tuple(selected_ui_options), tuple(lake_ids))
+    for i, (title, buf, _) in enumerate(self_norm_plots):
+        if i > 0 and i % 2 == 0: c.showPage()
+        y_pos = A4[1] - 50 if i % 2 == 0 else A4[1] * 0.5 - 60
+        img_y_pos = A4[1] * 0.5 - 20 if i % 2 == 0 else 20
+        c.setFont("Helvetica-Bold", 14); c.drawCentredString(A4[0] / 2, y_pos, title)
+        c.drawImage(ImageReader(buf), 40, img_y_pos, width=A4[0] - 80, height=A4[1] * 0.45 - 40, preserveAspectRatio=True)
+        if i % 2 == 0 and i + 1 < len(self_norm_plots): c.line(40, A4[1]*0.5 - 40, A4[0] - 40, A4[1]*0.5 - 40)
+    c.showPage()
+
+    # Now, define and draw the main case study figures using the NEW plot functions
     bookmark_locations['case_study'] = c.getPageNumber()
     c.bookmarkPage('case_study')
+    c.addOutlineEntry("Comparative Case Study", "case_study", level=0, closed=False)
+
     case_study_figures = [
-        plot_radar_chart(calc_details, tuple(lake_ids)), 
-        plot_health_score_evolution(df, selected_ui_options, tuple(lake_ids)), 
-        plot_holistic_trajectory_matrix(df, results, selected_ui_options, tuple(lake_ids)), 
-        plot_hdi_vs_health_correlation(results, tuple(lake_ids)) # Restored this figure
+        plot_radar_chart(calc_details, tuple(lake_ids)),
+        # Use the NEW globally normalized evolution plot
+        plot_health_score_evolution_globally_normalized(df, tuple(selected_ui_options), tuple(lake_ids)),
+        # Use the NEW normalized holistic trajectory plot
+        plot_holistic_trajectory_matrix_normalized(df, results, tuple(selected_ui_options), tuple(lake_ids)),
+        # Keep the HDI plot
+        plot_hdi_vs_health_correlation(results, tuple(lake_ids))
     ]
+
+    # The rest of this loop remains the same
     for i, fig_data in enumerate(case_study_figures):
         if fig_data is None or fig_data[1] is None: continue
         if i > 0 : c.showPage()
@@ -611,7 +733,7 @@ def _draw_report_content(c, bookmark_locations=None):
         ai_prompt = build_figure_specific_ai_prompt(title, f"Analysis of lakes {lake_ids}.")
         ai_narrative = generate_ai_insight(ai_prompt).replace('\n', '<br/>')
         draw_paragraph(ai_narrative, justified_style, 40, y_cursor, A4[0]-80, A4[1]*0.4 - 40)
-    c.showPage() # FIX: Add this to ensure the last page is saved
+    c.showPage()
 
 def generate_comparative_pdf_report(df, results, calc_details, lake_ids, selected_ui_options):
     buffer = BytesIO()
