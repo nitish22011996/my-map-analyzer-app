@@ -506,9 +506,8 @@ def build_figure_specific_ai_prompt(figure_title, data_summary):
         "Write a concise but insightful academic interpretation (4–6 sentences). "
         "Do not simply restate the data. Instead:\n"
         "- Highlight how different lakes perform across the parameters shown.\n"
-        "- Compare lakes, noting balanced versus skewed patterns, and strong versus weak parameters.\n"
+        "- Compare lakes (using Lake ID), noting balanced versus skewed patterns, and strong versus weak parameters.\n"
         "- Point out any temporal or spatial trends, such as recovery, decline, or stability.\n"
-        "- Discuss what these patterns reveal about ecological stress, resilience, or socio-ecological interactions.\n"
         "- Maintain an academic tone suitable for a journal report, focusing on what the figure teaches us about comparative lake health."
     )
     return prompt
